@@ -1,0 +1,115 @@
+/* Kyte Data Studio shell styling. Hand-written (not Tailwind-built) so the shell runs
+   from `kyte run` with no CSS build step. A dark, IDE-like theme: fixed title bar on
+   top, a thin activity rail and an explorer column on the left, the main content area,
+   and a status bar pinned to the bottom. Later sessions restyle panels as they land. */
+
+:root {
+  --bg: #1e1e1e;
+  --bg-alt: #252526;
+  --bg-rail: #2d2d30;
+  --border: #3c3c3c;
+  --fg: #d4d4d4;
+  --fg-muted: #8a8a8a;
+  --accent: #0e7490;
+  --accent-fg: #e6f6fb;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+}
+
+.studio {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.titlebar .brand { font-weight: 600; letter-spacing: 0.2px; }
+.titlebar .conn { font-size: 12px; }
+
+.studio-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.activitybar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 48px;
+  padding: 8px 0;
+  background: var(--bg-rail);
+  border-right: 1px solid var(--border);
+  align-items: center;
+  flex: 0 0 auto;
+}
+.activitybar .act {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.activitybar .act:hover { background: rgba(255, 255, 255, 0.06); color: var(--fg); }
+.activitybar .act.active { background: var(--accent); color: var(--accent-fg); }
+
+.explorer {
+  width: 260px;
+  padding: 12px;
+  background: var(--bg-alt);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  flex: 0 0 auto;
+}
+.explorer .panel-title {
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  color: var(--fg-muted);
+  margin-bottom: 8px;
+}
+
+.content {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 24px;
+  min-width: 0;
+}
+.content .empty { max-width: 42ch; margin: 12vh auto 0; text-align: center; }
+.content .empty h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  padding: 0 12px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.muted { color: var(--fg-muted); }

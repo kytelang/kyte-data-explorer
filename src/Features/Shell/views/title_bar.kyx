@@ -1,0 +1,12 @@
+// The top title bar: product name on the left, and a slot on the right where the
+// active connection will show once connection management lands (session S2). For now
+// it renders a static placeholder. A view call returning Html embeds unescaped, so
+// the layout composes this with {titleBar()} directly.
+pub fn titleBar(): Html {
+    return <header class="titlebar">
+        <div class="brand">Kyte Data Studio</div>
+        <div class="conn" id="titlebar-conn">
+            <span class="muted">Not connected</span>
+        </div>
+    </header>;
+}

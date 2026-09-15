@@ -1,0 +1,10 @@
+// The left activity rail (VS Code style): icon buttons that switch the primary side
+// panel. In this shell they are inert placeholders; later sessions wire them to swap
+// the explorer panel (connections, schema, query history) over htmx.
+pub fn activityBar(): Html {
+    return <nav class="activitybar">
+        <button class="act active" title="Explorer" type="button">DB</button>
+        <button class="act" title="Query" type="button">SQL</button>
+        <button class="act" title="History" type="button">Log</button>
+    </nav>;
+}

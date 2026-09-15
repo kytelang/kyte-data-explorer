@@ -1,0 +1,9 @@
+// The bottom status bar: connection state on the left, app version on the right.
+// Static for now; later sessions update the left segment with the live driver,
+// database name, and last query timing.
+pub fn statusBar(): Html {
+    return <footer class="statusbar">
+        <span class="status-conn" id="status-conn">Ready</span>
+        <span class="status-version">Kyte Data Studio 0.1.0</span>
+    </footer>;
+}

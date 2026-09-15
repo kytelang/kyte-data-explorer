@@ -1,0 +1,10 @@
+// The Shell feature's route table: the studio page and the liveness probe. Registered
+// once from the composition root (main.ky). As features land, each gets its own
+// `register(app, deps...)` and main calls them in turn.
+import web.app;
+import Features.Shell.handler;
+
+pub fn registerShell(app: App): void {
+    app.get("/", ShellHandler());
+    app.get("/healthz", HealthzHandler());
+}

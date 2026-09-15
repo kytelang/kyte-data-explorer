@@ -1,0 +1,40 @@
+// The studio page shell: the one full-document view. It wires the three bar partials
+// (title, activity, status) into the outer frame and leaves the explorer and content
+// panels as placeholders that later sessions fill over htmx. Styling lives in the
+// static /studio.css (served from wwwroot) so the CSS is not run through KyX escaping.
+// htmx is loaded from a CDN for now; it will be vendored into wwwroot before the desktop
+// (webview) packaging session, since a desktop app must run offline.
+import Features.Shell.views.title_bar;
+import Features.Shell.views.activity_bar;
+import Features.Shell.views.status_bar;
+
+pub fn page(): Html {
+    return <html lang="en">
+        <head>
+            <meta charset="utf-8"/>
+            <meta name="viewport" content="width=device-width, initial-scale=1"/>
+            <title>Kyte Data Studio</title>
+            <link rel="stylesheet" href="/studio.css"/>
+            <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
+        </head>
+        <body>
+            <div class="studio">
+                {titleBar()}
+                <div class="studio-main">
+                    {activityBar()}
+                    <aside class="explorer" id="explorer">
+                        <div class="panel-title">Explorer</div>
+                        <p class="muted">No connection yet. Connecting to a database will list its schemas, tables and indexes here.</p>
+                    </aside>
+                    <section class="content" id="content">
+                        <div class="empty">
+                            <h1>Kyte Data Studio</h1>
+                            <p class="muted">A database studio for kaidb, Postgres, MySQL, MSSQL and MongoDB. Connect a database to begin.</p>
+                        </div>
+                    </section>
+                </div>
+                {statusBar()}
+            </div>
+        </body>
+    </html>;
+}

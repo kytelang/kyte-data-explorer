@@ -1,0 +1,31 @@
+// The shell feature's handlers: the studio page at GET "/" and a liveness probe at
+// GET "/healthz". Both are dependency-free for now (no repository, no database), so
+// their structs hold no fields. Each implements the uniform RouteHandler shape:
+// one `async serve(ctx): Response`.
+import web.routing;
+import web.response;
+import web.status;
+import Features.Shell.views.layout;
+
+// Serves the full studio document. The KyX `page()` renders the <html> element; we
+// prepend the doctype so the browser (and later the webview) uses standards mode.
+pub struct ShellHandler impl RouteHandler {
+    init() {}
+
+    async fn serve(self: ShellHandler, ctx: Context): Response {
+        let body = "<!doctype html>\n" + page();
+        return response.Response(Status.Ok, body)
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}
+
+// Liveness probe. Returns a plain "ok" with 200 so a supervisor (or the desktop shell
+// waiting for the server to come up) can poll readiness cheaply.
+pub struct HealthzHandler impl RouteHandler {
+    init() {}
+
+    async fn serve(self: HealthzHandler, ctx: Context): Response {
+        return response.Response(Status.Ok, "ok")
+            .setHeader("Content-Type", "text/plain; charset=utf-8");
+    }
+}
