@@ -1,0 +1,58 @@
+// The database capability layer. It maps a studio connection form to the right Kyte
+// driver, builds a connection string, and opens a short-lived pool to PROBE the target
+// so a bad host or credentials surface at connect time rather than on first use.
+//
+// Only kaidb is wired in this session (S2); postgres/mysql/mssql/mongo slot in as extra
+// `dbtype` cases in `driverFor`/`dsnFor` in later sessions (S6/S7). Persisting the current
+// connection (so the explorer and query panels reuse it) is S3's job; here we just probe
+// and report, holding no state.
+import novadb;
+import data.db;
+import data.sql.pool;
+import list;
+import string;
+import metrics;
+
+// The outcome of a connect attempt: whether the target answered, and a human message
+// (table count on success, or the driver's error on failure) for the UI to show.
+pub struct ProbeResult {
+    pub ok: bool,
+    pub message: string,
+    init(ok: bool, message: string) { self.ok = ok; self.message = message; }
+}
+
+// Builds a kaidb connection string of the form `user:pass@host:port?db=NAME&tls=false`.
+// The userinfo prefix is omitted when no user is given (kaidb with auth disabled).
+fn kaidbDsn(host: string, port: string, user: string, password: string, dbname: string): string {
+    let auth = "";
+    if (!string.eql(user, "")) { auth = user + ":" + password + "@"; }
+    let db = dbname;
+    if (string.eql(db, "")) { db = "default"; }
+    return auth + host + ":" + port + "?db=" + db + "&tls=false";
+}
+
+// Opens a one-connection pool to the target, runs a trivial catalog query to confirm the
+// server answered, then tears the pool down. Returns ok + a message. Errors are reported
+// through `ResultSet.ok()`/`.err` rather than thrown, matching the driver's result model.
+pub async fn probeKaidb(host: string, port: string, user: string, password: string, dbname: string): ProbeResult {
+    let dsn = kaidbDsn(host, port, user, password, dbname);
+    let p = pool.Pool(novadb.KyteDriver(), dsn, 1);
+    let conn = await p.acquire();
+    // Liveness probe. We only care whether the server is reachable and speaking the
+    // protocol, so a query that round-trips is enough. We do NOT require the query to
+    // succeed: a SQL error (e.g. the parser rejecting this trivial probe) still proves
+    // the server answered. Only a connection-class failure (SQLSTATE "08...", which the
+    // kaidb driver returns as 08006 "connection ... lost") counts as not connected.
+    // The real schema introspection happens in S3 once a connection is persisted.
+    let rs = await conn.query("SELECT 1", list.List<DbValue>());
+    p.release(conn);
+    p.closeAll();
+    if (rs.ok()) {
+        return ProbeResult(true, "Connected to kaidb at " + host + ":" + port + ".");
+    }
+    if (string.startsWith(rs.err.code, "08")) {
+        return ProbeResult(false, rs.err.message);
+    }
+    // Server responded (rejected the probe SQL) -> it is reachable.
+    return ProbeResult(true, "Connected to kaidb at " + host + ":" + port + ".");
+}

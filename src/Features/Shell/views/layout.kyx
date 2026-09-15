@@ -30,6 +30,7 @@ pub fn page(): Html {
                         <div class="empty">
                             <h1>Kyte Data Studio</h1>
                             <p class="muted">A database studio for kaidb, Postgres, MySQL, MSSQL and MongoDB. Connect a database to begin.</p>
+                            <button class="primary" hx-get="/connect" hx-target="#content" hx-swap="innerHTML">Connect a database</button>
                         </div>
                     </section>
                 </div>

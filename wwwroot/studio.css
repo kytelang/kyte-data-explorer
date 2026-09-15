@@ -113,3 +113,44 @@ html, body {
 }
 
 .muted { color: var(--fg-muted); }
+
+/* Connections feature (S2): the connect button, form, and result banner. */
+button.primary {
+  margin-top: 16px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+button.primary:hover { filter: brightness(1.1); }
+
+.conn-form { max-width: 420px; }
+.conn-form h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px; }
+.conn-form form { display: flex; flex-direction: column; gap: 10px; }
+.conn-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--fg-muted); }
+.conn-form input, .conn-form select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.conn-form button[type="submit"] {
+  margin-top: 6px;
+  align-self: flex-start;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  padding: 8px 18px;
+  cursor: pointer;
+}
+.conn-result { margin-top: 14px; }
+.result { border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.result strong { font-weight: 600; }
+.result.ok { background: rgba(16, 185, 129, 0.12); border: 1px solid #10b981; color: #6ee7b7; }
+.result.err { background: rgba(239, 68, 68, 0.12); border: 1px solid #ef4444; color: #fca5a5; }

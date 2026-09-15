@@ -1,0 +1,38 @@
+// The Connections feature handlers: serve the connect form (GET /connect) and attempt a
+// connection (POST /connect). This session probes the target and reports the outcome; it
+// does not yet persist the connection (that is S3, where the explorer reuses it). Only the
+// kaidb dbtype is wired; other types return a "not yet supported" result.
+import web.routing;
+import web.response;
+import web.status;
+import string;
+import Features.Connections.command;
+import Features.Connections.views.connect_form;
+import Features.Connections.views.connect_result;
+import Shared.Db;
+
+// GET /connect: return the connect form fragment (htmx swaps it into the content area).
+pub struct GetConnectFormHandler impl RouteHandler {
+    init() {}
+
+    async fn serve(self: GetConnectFormHandler, ctx: Context): Response {
+        return response.Response(Status.Ok, connectForm())
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}
+
+// POST /connect: bind the form, probe the target, and return the result fragment.
+pub struct ConnectHandler impl RouteHandler {
+    init() {}
+
+    async fn serve(self: ConnectHandler, ctx: Context): Response {
+        let f = ctx.bind<ConnectForm>();
+        if (!string.eql(f.dbtype, "kaidb")) {
+            let frag = connectResult(false, f.dbtype + " is not wired yet; kaidb is supported in this build.");
+            return response.Response(Status.Ok, frag).setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        let r = await probeKaidb(f.host, f.port, f.user, f.password, f.dbname);
+        return response.Response(Status.Ok, connectResult(r.ok, r.message))
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}

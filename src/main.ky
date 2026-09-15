@@ -11,6 +11,7 @@ import string;
 import data.migrate;
 import migrations;
 import Features.Shell.routes;
+import Features.Connections.routes;
 
 fn buildApp(): App {
     let app = App();
@@ -18,6 +19,7 @@ fn buildApp(): App {
     // Register each feature's routes. As the studio grows, add a feature module with its
     // own `register(app, deps...)` and call it here (connections, explorer, query, ...).
     registerShell(app);
+    registerConnections(app);
 
     // Serve static assets (wwwroot/) for any unmatched GET: /studio.css and, later, the
     // vendored htmx bundle and other front-end assets.

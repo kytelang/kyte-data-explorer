@@ -1,0 +1,19 @@
+// The connect form's bound shape. `ctx.bind<ConnectForm>()` fills these from the POST
+// body by field name. Marked @serializable so the framework can bind it.
+@serializable
+pub struct ConnectForm {
+    pub dbtype: string,
+    pub host: string,
+    pub port: string,
+    pub user: string,
+    pub password: string,
+    pub dbname: string,
+    init() {
+        self.dbtype = "kaidb";
+        self.host = "127.0.0.1";
+        self.port = "";
+        self.user = "";
+        self.password = "";
+        self.dbname = "";
+    }
+}

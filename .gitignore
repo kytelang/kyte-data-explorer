@@ -1,2 +1,5 @@
 build/
 *.o
+
+# Local driver package symlinks (dev): resolved via packages/ roots, not committed.
+packages/

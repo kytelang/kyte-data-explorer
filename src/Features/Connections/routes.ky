@@ -1,0 +1,8 @@
+// The Connections feature route table: serve the form and handle the connect attempt.
+import web.app;
+import Features.Connections.handler;
+
+pub fn registerConnections(app: App): void {
+    app.get("/connect", GetConnectFormHandler());
+    app.post("/connect", ConnectHandler());
+}
