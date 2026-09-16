@@ -1,0 +1,8 @@
+// The bound shape for a run request. `ctx.bind<QueryForm>()` fills `sql` from the
+// POST body, which htmx sends from the hidden textarea the Monaco editor keeps in
+// sync. Marked @serializable so the framework can bind it.
+@serializable
+pub struct QueryForm {
+    pub sql: string,
+    init() { self.sql = ""; }
+}

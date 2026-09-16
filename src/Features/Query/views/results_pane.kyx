@@ -1,0 +1,53 @@
+// The results area, swapped into #results after a run. Three shapes: a red error box
+// on failure, a plain "OK" for a statement that returns no columns (DDL/INSERT/etc.),
+// and otherwise a scrollable grid with a row-count footer.
+import list;
+import Shared.Db;
+
+// Row-count footer text. A plain function so the int-to-string template is out of the
+// markup; notes truncation when the cap clipped the result.
+fn rowSummary(r: Db.QueryResult): string {
+    if (r.truncated) { return `Showing first ${r.rows.size()} of ${r.rowCount} rows.`; }
+    return `${r.rowCount} rows.`;
+}
+
+pub fn resultsPane(r: Db.QueryResult): Html {
+    if (!r.ok) {
+        return <div class="result err">
+            <strong>Query failed</strong>
+            <span>{r.error}</span>
+        </div>;
+    }
+    if (r.columns.size() == 0) {
+        return <div class="result ok">
+            <strong>OK</strong>
+            <span>Statement executed.</span>
+        </div>;
+    }
+    return <div class="result-grid">
+        <div class="grid-wrap">
+            <table class="grid">
+                <thead>
+                    <tr>
+                        {for (i in 0..r.columns.size()) {
+                            let cn = r.columns.get(i) ?? "";
+                            <th>{cn}</th>;
+                        }}
+                    </tr>
+                </thead>
+                <tbody>
+                    {for (ri in 0..r.rows.size()) {
+                        let row = r.rows.get(ri) ?? list.List<string>();
+                        <tr>
+                            {for (ci in 0..row.size()) {
+                                let cell = row.get(ci) ?? "";
+                                <td>{cell}</td>;
+                            }}
+                        </tr>;
+                    }}
+                </tbody>
+            </table>
+        </div>
+        <div class="grid-foot muted">{rowSummary(r)}</div>
+    </div>;
+}

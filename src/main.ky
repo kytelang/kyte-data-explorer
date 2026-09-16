@@ -15,6 +15,7 @@ import Shared.AppContext;
 import Features.Shell.routes;
 import Features.Connections.routes;
 import Features.Explorer.routes;
+import Features.Query.routes;
 
 fn buildApp(): App {
     let app = App();
@@ -28,6 +29,7 @@ fn buildApp(): App {
     registerShell(ctx);
     registerConnections(ctx);
     registerExplorer(ctx);
+    registerQuery(ctx);
 
     // Serve static assets (wwwroot/) for any unmatched GET: /studio.css and, later, the
     // vendored htmx bundle and other front-end assets.

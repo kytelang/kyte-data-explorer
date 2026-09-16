@@ -44,6 +44,32 @@ pub struct IndexInfo {
     init(name: string) { self.name = name; }
 }
 
+// The row cap for an ad-hoc query result. S4 just runs a query and shows a grid;
+// pagination and a configurable cap are S5. We materialise at most this many rows so
+// a careless `SELECT *` on a large table cannot exhaust memory or the page.
+pub const QUERY_ROW_CAP: int = 500;
+
+// A materialised query result for the query panel: the column headers and the row
+// cells as plain strings (built before the pool closes, so nothing borrows freed
+// driver buffers), plus a row count, a truncation flag, and any error text. On a
+// failed query `ok` is false and `error` carries the driver's message.
+pub struct QueryResult {
+    pub ok: bool,
+    pub columns: list.List<string>,
+    pub rows: list.List<list.List<string>>,
+    pub rowCount: int,
+    pub truncated: bool,
+    pub error: string,
+    init() {
+        self.ok = false;
+        self.columns = list.List<string>();
+        self.rows = list.List<list.List<string>>();
+        self.rowCount = 0;
+        self.truncated = false;
+        self.error = "";
+    }
+}
+
 // Builds a kaidb connection string of the form `user:pass@host:port?db=NAME&tls=false`.
 // The userinfo prefix is omitted when no user is given (kaidb with auth disabled).
 pub fn kaidbDsn(host: string, port: string, user: string, password: string, dbname: string): string {
@@ -171,4 +197,48 @@ pub async fn listIndexes(dbtype: string, dsn: string, table: string): list.List<
     p.release(conn);
     p.closeAll();
     return out;
+}
+
+// Runs an arbitrary SQL statement typed into the query panel and materialises the
+// result into owned strings. Everything is copied out of the driver's result set
+// BEFORE the pool is closed, so the returned `QueryResult` never borrows freed driver
+// buffers. Rows are capped at QUERY_ROW_CAP; `truncated` says whether more existed.
+// A failed statement returns ok=false with the driver's message in `error`.
+pub async fn runQuery(dbtype: string, dsn: string, sql: string): QueryResult {
+    let r = QueryResult();
+    let p = poolFor(dbtype, dsn);
+    let conn = await p.acquire();
+    let rs = await conn.query(sql, list.List<db.DbValue>());
+    if (!rs.ok()) {
+        r.error = rs.err.message;
+        p.release(conn);
+        p.closeAll();
+        return r;
+    }
+    r.ok = true;
+    let ncols = rs.columns.size();
+    let c = 0;
+    while (c < ncols) {
+        r.columns.push(rs.columns.at(c).name);
+        c = c + 1;
+    }
+    let total = rs.rows.size();
+    r.rowCount = total;
+    let limit = total;
+    if (limit > QUERY_ROW_CAP) { limit = QUERY_ROW_CAP; r.truncated = true; }
+    let i = 0;
+    while (i < limit) {
+        let row = rs.rows.at(i);
+        let cells = list.List<string>();
+        let j = 0;
+        while (j < ncols) {
+            if (row.isNull(j)) { cells.push("NULL"); } else { cells.push(row.getText(j)); }
+            j = j + 1;
+        }
+        r.rows.push(cells);
+        i = i + 1;
+    }
+    p.release(conn);
+    p.closeAll();
+    return r;
 }

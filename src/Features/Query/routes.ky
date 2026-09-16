@@ -1,0 +1,9 @@
+// The Query feature route table: the SQL editor panel (GET /query) and running a
+// statement (POST /query). Registered once from the composition root.
+import Shared.AppContext;
+import Features.Query.handler;
+
+pub fn registerQuery(ctx: AppContext): void {
+    ctx.app.get("/query", GetQueryPanelHandler(ctx.conn));
+    ctx.app.post("/query", RunQueryHandler(ctx.conn));
+}

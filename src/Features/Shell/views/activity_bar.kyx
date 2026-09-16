@@ -1,10 +1,12 @@
-// The left activity rail (VS Code style): icon buttons that switch the primary side
-// panel. In this shell they are inert placeholders; later sessions wire them to swap
-// the explorer panel (connections, schema, query history) over htmx.
+// The left activity rail (VS Code style): icon buttons that switch the content pane.
+// "DB" opens the connect form, "SQL" opens the query editor; both htmx-swap into the
+// content area. "Log" (query history) is a later session.
 pub fn activityBar(): Html {
     return <nav class="activitybar">
-        <button class="act active" title="Explorer" type="button">DB</button>
-        <button class="act" title="Query" type="button">SQL</button>
+        <button class="act" title="Connect" type="button"
+                hx-get="/connect" hx-target="#content" hx-swap="innerHTML">DB</button>
+        <button class="act" title="SQL editor" type="button"
+                hx-get="/query" hx-target="#content" hx-swap="innerHTML">SQL</button>
         <button class="act" title="History" type="button">Log</button>
     </nav>;
 }

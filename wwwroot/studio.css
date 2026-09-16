@@ -194,6 +194,47 @@ table.cols th { color: var(--fg-muted); font-size: 10px; text-transform: upperca
 .idx-list li { padding: 2px 0; }
 .idx-list li::before { content: "# "; color: var(--fg-muted); }
 
+/* Query feature (S4): the SQL editor panel and results grid. */
+.query-view { display: flex; flex-direction: column; height: 100%; }
+.query-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.query-title { font-size: 13px; font-weight: 600; }
+.run-btn { margin-top: 0; padding: 6px 18px; }
+.query-conn { margin-left: auto; font-size: 12px; }
+.sql-hidden { display: none; }
+.sql-editor {
+  height: 240px;
+  min-height: 160px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.results { margin-top: 12px; flex: 1 1 auto; min-height: 0; overflow: auto; }
+.result-grid { display: flex; flex-direction: column; }
+.grid-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+table.grid { border-collapse: collapse; width: 100%; font-size: 12px; }
+table.grid th, table.grid td {
+  text-align: left;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+}
+table.grid th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-rail);
+  color: var(--fg-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+table.grid tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
+.grid-foot { margin-top: 6px; font-size: 11px; }
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: inline; }
+
 .conn-result { margin-top: 14px; }
 .result { border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
 .result strong { font-weight: 600; }
