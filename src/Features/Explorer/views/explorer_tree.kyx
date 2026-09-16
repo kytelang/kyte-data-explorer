@@ -47,3 +47,29 @@ pub fn explorerTree(connected: bool, host: string, port: string, dbname: string,
         </div>
     </div>;
 }
+
+// The Mongo variant of the tree: one "Collections" folder listing the database's
+// collections. Each collection carries data-mongo-coll; studio.js turns a click into a
+// find-all on that collection (sets the editor to the collection name and runs it), so
+// clicking a collection shows its documents in the results pane.
+pub fn explorerTreeMongo(host: string, port: string, dbname: string, collections: list.List<string>): Html {
+    let heading = host + ":" + port + " (" + dbname + ")";
+    return <div class="oe-conn">
+        <div class="oe-conn-head">
+            <div class="label"><span class="bolt"><i class="ic ic-bolt"></i></span><span class="host">{heading}</span></div>
+            <span class="live" title="Active Context"></span>
+        </div>
+        <div class="oe-conn-body">
+            <details open class="oe-folder">
+                <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Collections</span></div></summary>
+                <div class="oe-children">
+                    {if (collections.size() == 0) { <div class="oe-none">No collections</div>; }}
+                    {for (i in 0..collections.size()) {
+                        let c = collections.get(i) ?? "";
+                        <div class="oe-row table" data-mongo-coll={c}><span><i class="ic ic-table"></i></span><span class="name">{c}</span></div>;
+                    }}
+                </div>
+            </details>
+        </div>
+    </div>;
+}

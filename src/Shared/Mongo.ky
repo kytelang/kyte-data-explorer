@@ -1,0 +1,160 @@
+// The MongoDB capability layer. Mongo is a document store, not SQL, so it does not go
+// through Shared/Db.ky's pool/query path: it uses the mongodb driver's public document
+// API (mongodb.open -> MongoConnection -> database().collection().find()), and lists
+// collections with a `listCollections` runCommand. Each call opens a short-lived
+// connection and closes it, matching the short-lived-pool shape used for the SQL side.
+//
+// Only the driver's public `mongodb` module and the stdlib `serde.bson` are imported;
+// the driver's internal `operation`/`document` modules are not reachable from a
+// consumer, so filters/options come from mongodb.* and BSON is read with bson.*.
+import mongodb;
+import serde.bson;
+import list;
+import string;
+import datetime;
+import Shared.Db;
+
+// A materialised find result for the documents pane: the collection, each matched
+// document as a JSON string, a count, timing, and any error.
+pub struct MongoResult {
+    pub ok: bool,
+    pub collection: string,
+    pub docs: list.List<string>,
+    pub count: int,
+    pub elapsedMs: long,
+    pub error: string,
+    init() {
+        self.ok = false;
+        self.collection = "";
+        self.docs = list.List<string>();
+        self.count = 0;
+        self.elapsedMs = 0;
+        self.error = "";
+    }
+}
+
+// Builds a `mongodb://[user:pass@]host:port/db` connection string.
+pub fn mongoDsn(host: string, port: string, user: string, password: string, dbname: string): string {
+    let auth = "";
+    if (!string.eql(user, "")) { auth = user + ":" + password + "@"; }
+    let db = dbname;
+    if (string.eql(db, "")) { db = "test"; }
+    return "mongodb://" + auth + host + ":" + port + "/" + db;
+}
+
+// The `{ listCollections: 1, $db: <db> }` admin command, built directly as BSON.
+fn listCollectionsCmd(dbName: string): bson.BsonDocument {
+    let cmd = bson.BsonDocument{ entries: list.List<bson.BsonEntry>() };
+    cmd.entries.push(bson.entryInt("listCollections", 1));
+    cmd.entries.push(bson.entryString("$db", dbName));
+    return cmd;
+}
+
+// The server's error message from a command reply ({ ok: 0, errmsg, code }), or "" when
+// the command succeeded.
+fn replyError(reply: bson.BsonDocument): string {
+    let ei = bson.docFind(reply, "errmsg");
+    if (ei >= 0) { return bson.docGetString(reply, ei); }
+    return "";
+}
+
+// Probes a Mongo target by opening a connection and running listCollections; reachable
+// when the command comes back without an error.
+pub async fn mongoProbe(host: string, port: string, user: string, password: string, dbname: string): Db.ProbeResult {
+    let dsn = mongoDsn(host, port, user, password, dbname);
+    let conn = await mongodb.open(dsn);
+    let reply = await conn.runCommand(listCollectionsCmd(dbname));
+    let err = replyError(reply);
+    conn.close();
+    if (string.eql(err, "")) {
+        return Db.ProbeResult(true, "Connected to mongodb at " + host + ":" + port + ".");
+    }
+    return Db.ProbeResult(false, err);
+}
+
+// Lists the collection names of the connected database via listCollections. The reply
+// carries them in `cursor.firstBatch`, one sub-document per collection with a `name`.
+pub async fn mongoListCollections(dsn: string, dbname: string): list.List<string> {
+    let out = list.List<string>();
+    let conn = await mongodb.open(dsn);
+    let reply = await conn.runCommand(listCollectionsCmd(dbname));
+    let ci = bson.docFind(reply, "cursor");
+    if (ci >= 0) {
+        let cursorDoc = bson.deserialize(bson.docGetDoc(reply, ci) as ptr);
+        let fbi = bson.docFind(cursorDoc, "firstBatch");
+        if (fbi >= 0) {
+            let arr = bson.deserialize(bson.docGetArray(cursorDoc, fbi) as ptr);
+            let i = 0;
+            while (i < arr.entries.size()) {
+                let d = bson.deserialize(bson.docGetDoc(arr, i) as ptr);
+                let ni = bson.docFind(d, "name");
+                if (ni >= 0) {
+                    let name = bson.docGetString(d, ni);
+                    if (!string.eql(name, "")) { out.push(name); }
+                }
+                i = i + 1;
+            }
+        }
+    }
+    conn.close();
+    return out;
+}
+
+// Runs a find on one collection and materialises each document as JSON. An empty
+// `field` means "match everything"; otherwise a single equality (`field == value`)
+// filter is applied. Results are capped at `limit`.
+pub async fn mongoFind(dsn: string, dbname: string, coll: string, field: string, value: string, limit: int): MongoResult {
+    let r = MongoResult();
+    r.collection = coll;
+    let conn = await mongodb.open(dsn);
+    let t0 = datetime.nowNs();
+    let f = mongodb.filter();
+    if (!string.eql(field, "")) { f = f.eqStr(field, value); }
+    let opts = mongodb.findOptions().withLimit(limit as long);
+    let cur = await conn.database(dbname).collection(coll).find(f, opts);
+    let docs = await cur.toList();
+    let t1 = datetime.nowNs();
+    r.elapsedMs = (t1 - t0) / 1000000;
+    if (!cur.ok()) {
+        r.error = cur.err.message;
+        conn.close();
+        return r;
+    }
+    r.ok = true;
+    let i = 0;
+    while (i < docs.size()) {
+        r.docs.push((docs.get(i) ?? mongodb.doc()).toJson());
+        i = i + 1;
+    }
+    r.count = docs.size();
+    conn.close();
+    return r;
+}
+
+// A parsed Mongo find request from the query box: the first whitespace-delimited token
+// is the collection; an optional `field=value` token adds a single equality filter.
+// e.g. "users"  ->  find all in users;  "users city=Pune"  ->  users where city == Pune.
+pub struct MongoCmd {
+    pub coll: string,
+    pub field: string,
+    pub value: string,
+    init(coll: string, field: string, value: string) { self.coll = coll; self.field = field; self.value = value; }
+}
+
+pub fn parseFind(text: string): MongoCmd {
+    let s = string.trim(text);
+    let coll = s;
+    let field = "";
+    let value = "";
+    let sp = string.indexOf(s, " ");
+    if (sp != -1) {
+        coll = string.slice(s, 0, sp);
+        let rest = string.trim(string.slice(s, sp + 1, s.length));
+        let eq = string.indexOf(rest, "=");
+        if (eq != -1) {
+            field = string.trim(string.slice(rest, 0, eq));
+            value = string.trim(string.slice(rest, eq + 1, rest.length));
+        }
+    }
+    return MongoCmd(coll, field, value);
+}

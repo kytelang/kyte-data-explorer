@@ -3,10 +3,13 @@
 import web.routing;
 import web.response;
 import web.status;
+import string;
 import Shared.Session;
 import Shared.Db;
+import Shared.Mongo;
 import Features.Query.command;
 import Features.Query.views.results_pane;
+import Features.Query.views.mongo_results;
 
 pub struct RunQueryHandler impl RouteHandler {
     conn: ActiveConnection,
@@ -18,6 +21,14 @@ pub struct RunQueryHandler impl RouteHandler {
             let r = Db.QueryResult();
             r.error = "Not connected. Connect a database first.";
             return response.Response(Status.Ok, resultsPane(r))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        // Mongo runs a find over a collection, not SQL: the query box is
+        // "<collection> [field=value]". Documents come back as JSON blocks.
+        if (string.eql(self.conn.dbtype, "mongodb")) {
+            let cmd = parseFind(f.sql);
+            let mres = await mongoFind(self.conn.dsn, self.conn.dbname, cmd.coll, cmd.field, cmd.value, Db.QUERY_ROW_CAP);
+            return response.Response(Status.Ok, mongoResultsPane(mres))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
         let result = await runQuery(self.conn.dbtype, self.conn.dsn, f.sql);

@@ -13,6 +13,7 @@ import web.status;
 import list;
 import Shared.Session;
 import Shared.Db;
+import Shared.Mongo;
 import Features.Explorer.command;
 import Features.Explorer.views.explorer_tree;
 import Features.Explorer.views.table_detail;
@@ -28,6 +29,11 @@ pub struct ExplorerHandler impl RouteHandler {
         let c = self.conn;
         if (!c.connected) {
             return response.Response(Status.Ok, explorerTree(false, "", "", "", list.List<string>()))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        if (string.eql(c.dbtype, "mongodb")) {
+            let colls = await mongoListCollections(c.dsn, c.dbname);
+            return response.Response(Status.Ok, explorerTreeMongo(c.host, c.port, c.dbname, colls))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
         let tables = await listTables(c.dbtype, c.dsn);

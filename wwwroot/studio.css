@@ -285,5 +285,14 @@ details[open] > summary > .oe-row.table .chev::after { content: "▾"; }
 .ic-error::before { content: "❌"; }
 .ic-check::before { content: "✔"; }
 
+/* Mongo documents view: JSON blocks stacked vertically. */
+.doc-scroll { height: 100%; overflow: auto; padding: 8px 12px; }
+.doc-json {
+  margin: 0 0 8px; padding: 10px 12px;
+  background: #252526; border: 1px solid #3c3c3c; border-radius: 6px;
+  color: #d4d4d4; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; white-space: pre-wrap; word-break: break-word;
+}
+
 .htmx-indicator { display: none; }
 .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: inline; }

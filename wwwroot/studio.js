@@ -137,6 +137,19 @@ document.addEventListener("click", function (e) {
   }
   if (e.target.closest && e.target.closest("[data-copy]")) { studioCopyResults(); return; }
 
+  // Mongo: clicking a collection runs find-all on it (puts the collection name in the
+  // editor and clicks Run). The query box for Mongo is "<collection> [field=value]".
+  var coll = e.target.closest ? e.target.closest("[data-mongo-coll]") : null;
+  if (coll) {
+    var name = coll.getAttribute("data-mongo-coll");
+    if (window.__ed) { window.__ed.setValue(name); }
+    var hidden = document.getElementById("sql-src");
+    if (hidden) hidden.value = name;
+    var runBtn = document.getElementById("run-btn");
+    if (runBtn) runBtn.click();
+    return;
+  }
+
   // Close the modal on the × / Cancel buttons (they carry data-close-modal) or a click
   // on the backdrop ITSELF. We must not use closest() against the backdrop, since it is
   // the ancestor of the whole dialog and would swallow the Connect click.

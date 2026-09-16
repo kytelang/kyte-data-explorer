@@ -13,6 +13,7 @@ import string;
 import Features.Connections.command;
 import Features.Connections.views.connect_form;
 import Shared.Db;
+import Shared.Mongo;
 import Shared.Session;
 
 // GET /connect: the modal, no error.
@@ -32,11 +33,24 @@ pub struct ConnectHandler impl RouteHandler {
 
     async fn serve(self: ConnectHandler, ctx: Context): Response {
         let f = ctx.bind<ConnectForm>();
-        // The four SQL engines are wired; Mongo (document mode) is a later session.
+        // Mongo (document mode) probes through its own driver path; the four SQL engines
+        // share the SQL capability layer.
+        if (string.eql(f.dbtype, "mongodb")) {
+            let mr = await mongoProbe(f.host, f.port, f.user, f.password, f.dbname);
+            if (!mr.ok) {
+                return response.Response(Status.Ok, connectModal(mr.message))
+                    .setHeader("Content-Type", "text/html; charset=utf-8");
+            }
+            let mdsn = mongoDsn(f.host, f.port, f.user, f.password, f.dbname);
+            self.conn.set("mongodb", mdsn, f.host, f.port, f.dbname);
+            let mjs = "<script>(function(){var m=document.getElementById('modal-root');if(m){m.innerHTML='';}if(window.htmx){htmx.trigger(document.body,'connected');}})();</script>";
+            return response.Response(Status.Ok, response.raw(mjs))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
         let wired = string.eql(f.dbtype, "kaidb") || string.eql(f.dbtype, "postgres")
             || string.eql(f.dbtype, "mysql") || string.eql(f.dbtype, "mssql");
         if (!wired) {
-            return response.Response(Status.Ok, connectModal(f.dbtype + " is not wired yet; kaidb, postgres, mysql and mssql are supported in this build."))
+            return response.Response(Status.Ok, connectModal(f.dbtype + " is not wired yet."))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
         let r = await probe(f.dbtype, f.host, f.port, f.user, f.password, f.dbname);

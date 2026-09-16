@@ -1,0 +1,49 @@
+// The results-pane body for a Mongo find: documents rendered as JSON blocks (not the
+// SQL grid). Same tabwrap/data-* shape as the SQL results so studio.js drives the
+// Results/Messages tab switch and the status-bar timing identically.
+import list;
+import Shared.Mongo;
+
+fn msText(r: Mongo.MongoResult): string { return `${r.elapsedMs} ms`; }
+
+fn docsView(r: Mongo.MongoResult): Html {
+    if (!r.ok) {
+        return <div class="results-empty"><span><i class="ic ic-table"></i>&nbsp;&nbsp;No documents. See Messages.</span></div>;
+    }
+    if (r.docs.size() == 0) {
+        return <div class="results-empty"><span><i class="ic ic-table"></i>&nbsp;&nbsp;No documents matched.</span></div>;
+    }
+    return <div class="doc-scroll">
+        {for (i in 0..r.docs.size()) {
+            let d = r.docs.get(i) ?? "";
+            <pre class="doc-json">{d}</pre>;
+        }}
+    </div>;
+}
+
+fn msgView(r: Mongo.MongoResult): Html {
+    if (!r.ok) {
+        return <div class="messages">
+            <div class="err-title"><i class="ic ic-error"></i>&nbsp;Find failed:</div>
+            <div class="err-body">{r.error}</div>
+            <div class="muted">{msText(r)}</div>
+        </div>;
+    }
+    return <div class="messages">
+        <div class="ok"><i class="ic ic-check"></i>&nbsp;Find on {r.collection} succeeded.</div>
+        <div>{docCount(r)}</div>
+        <div>{msText(r)}</div>
+        <div class="muted">Ready.</div>
+    </div>;
+}
+
+fn docCount(r: Mongo.MongoResult): string { return `${r.count} documents`; }
+
+fn errFlag(r: Mongo.MongoResult): string { if (r.ok) { return "0"; } return "1"; }
+
+pub fn mongoResultsPane(r: Mongo.MongoResult): Html {
+    return <div class="tabwrap" data-error={errFlag(r)} data-ms={msText(r)} style="height:100%">
+        <div class="tabview" data-view="results" style="height:100%">{docsView(r)}</div>
+        <div class="tabview hidden" data-view="messages">{msgView(r)}</div>
+    </div>;
+}
