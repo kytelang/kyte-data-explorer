@@ -23,7 +23,7 @@ pub fn tableDetail(table: string, cols: list.List<Db.ColumnInfo>, idxs: list.Lis
                     <div>
                         {for (i in 0..idxs.size()) {
                             let ix = idxs.get(i) ?? Db.IndexInfo("");
-                            <div class="oe-index"><span class="bolt"><i class="ic ic-bolt"></i></span><span>{ix.name}</span></div>;
+                            <div class="oe-index"><span class="bolt"><i class="ic ic-key"></i></span><span>{ix.name}</span></div>;
                         }}
                     </div>;
                 }}

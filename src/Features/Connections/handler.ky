@@ -26,15 +26,21 @@ pub struct GetConnectFormHandler impl RouteHandler {
     }
 }
 
-// POST /connect: probe and, on success, record + close.
+// The script returned on a successful connect / connection switch: defer clearing
+// #modal-root (so htmx settles the swap first) and fire `connected` on <body> so the
+// explorer, status bar and toolbar refresh.
+fn closeAndAnnounce(): string {
+    return "<script>(function(){setTimeout(function(){var m=document.getElementById('modal-root');if(m){m.innerHTML='';}if(window.htmx){htmx.trigger(document.body,'connected');}},0);})();</script>";
+}
+
+// POST /connect: probe and, on success, APPEND the connection to the store (keeping any
+// existing connections) and make it active, then close the modal + announce.
 pub struct ConnectHandler impl RouteHandler {
-    conn: ActiveConnection,
-    init(conn: ActiveConnection) { self.conn = conn; }
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
 
     async fn serve(self: ConnectHandler, ctx: Context): Response {
         let f = ctx.bind<ConnectForm>();
-        // Mongo (document mode) probes through its own driver path; the four SQL engines
-        // share the SQL capability layer.
         if (string.eql(f.dbtype, "mongodb")) {
             let mr = await mongoProbe(f.host, f.port, f.user, f.password, f.dbname);
             if (!mr.ok) {
@@ -42,9 +48,8 @@ pub struct ConnectHandler impl RouteHandler {
                     .setHeader("Content-Type", "text/html; charset=utf-8");
             }
             let mdsn = mongoDsn(f.host, f.port, f.user, f.password, f.dbname);
-            self.conn.set("mongodb", mdsn, f.host, f.port, f.dbname);
-            let mjs = "<script>(function(){var m=document.getElementById('modal-root');if(m){m.innerHTML='';}if(window.htmx){htmx.trigger(document.body,'connected');}})();</script>";
-            return response.Response(Status.Ok, response.raw(mjs))
+            let _mid = self.store.add("mongodb", mdsn, f.host, f.port, f.dbname);
+            return response.Response(Status.Ok, response.raw(closeAndAnnounce()))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
         let wired = string.eql(f.dbtype, "kaidb") || string.eql(f.dbtype, "postgres")
@@ -56,17 +61,26 @@ pub struct ConnectHandler impl RouteHandler {
         let r = await probe(f.dbtype, f.host, f.port, f.user, f.password, f.dbname);
         if (r.ok) {
             let dsn = dsnFor(f.dbtype, f.host, f.port, f.user, f.password, f.dbname);
-            self.conn.set(f.dbtype, dsn, f.host, f.port, f.dbname);
-            // Close the modal and announce the connection. We dispatch `connected` on
-            // <body> from a script rather than via an HX-Trigger header: the header
-            // fires the event on the triggering form, which this swap removes, so it
-            // would never reach the body-level listeners on the explorer, title, status
-            // bar and toolbar.
-            let js = "<script>(function(){var m=document.getElementById('modal-root');if(m){m.innerHTML='';}if(window.htmx){htmx.trigger(document.body,'connected');}})();</script>";
-            return response.Response(Status.Ok, response.raw(js))
+            let _id = self.store.add(f.dbtype, dsn, f.host, f.port, f.dbname);
+            return response.Response(Status.Ok, response.raw(closeAndAnnounce()))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
         return response.Response(Status.Ok, connectModal(r.message))
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}
+
+// GET /use?id=N: make connection N the active one, then announce so the explorer,
+// status bar and toolbar re-render against the newly-selected connection.
+pub struct UseConnHandler impl RouteHandler {
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
+
+    async fn serve(self: UseConnHandler, ctx: Context): Response {
+        let q = ctx.bind<UseConnForm>();
+        let id = parseIntOr(q.id, -1);
+        if (id >= 0) { self.store.setActive(id); }
+        return response.Response(Status.Ok, response.raw(closeAndAnnounce()))
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
 }

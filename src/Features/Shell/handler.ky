@@ -1,7 +1,7 @@
 // The shell feature's handlers: the studio page at GET "/", a liveness probe at
-// GET "/healthz", and GET "/chrome" which returns the small connection-aware fragments
-// (title text, status-bar left, toolbar connection pill) that refresh on the htmx
-// `connected` event. All three read the shared ActiveConnection.
+// GET "/healthz", and GET "/chrome" for the small connection-aware fragments (status
+// bar left, toolbar connection label) that refresh on the htmx `connected` event. All
+// read the ACTIVE connection from the shared ConnStore.
 import web.routing;
 import web.response;
 import web.status;
@@ -11,63 +11,79 @@ import Features.Shell.views.layout;
 import Features.Shell.views.status_bar;
 import Features.Shell.command;
 
-// The active connection's engine label (the driver key), or "" when not connected.
-fn engineOf(conn: ActiveConnection): string {
-    if (!conn.connected) { return ""; }
-    return conn.dbtype;
+// The active connection's engine key, or "" when nothing is connected.
+fn engineOf(store: ConnStore): string {
+    let c = store.active();
+    if (c == undefined) { return ""; }
+    return c.dbtype;
 }
 
-// The title-bar line: "db - engine - host" when connected, else "Not Connected".
-fn titleTextOf(conn: ActiveConnection): string {
-    if (!conn.connected) { return "Not Connected"; }
-    return conn.dbname + " - " + conn.dbtype + " - " + conn.host;
+// The toolbar connection label: "kaidb 127.0.0.1:3009/default" or "Not connected".
+fn pillOf(store: ConnStore): string {
+    let c = store.active();
+    if (c == undefined) { return "Not connected"; }
+    return c.label();
 }
 
-// The toolbar connection pill: "host:port (db)" when connected, else "Not connected".
-fn pillOf(conn: ActiveConnection): string {
-    if (!conn.connected) { return "Not connected"; }
-    return conn.host + ":" + conn.port + " (" + conn.dbname + ")";
+// The title-bar line (kept for the /chrome contract even though the title bar is gone).
+fn titleTextOf(store: ConnStore): string {
+    let c = store.active();
+    if (c == undefined) { return "Not Connected"; }
+    return c.dbname + " - " + c.dbtype + " - " + c.host;
 }
 
-// Serves the full studio document. The KyX `page()` renders the <html> element; we
-// prepend the doctype so the browser (and later the webview) uses standards mode.
 pub struct ShellHandler impl RouteHandler {
-    conn: ActiveConnection,
-    init(conn: ActiveConnection) { self.conn = conn; }
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
 
     async fn serve(self: ShellHandler, ctx: Context): Response {
-        let c = self.conn;
-        let body = "<!doctype html>\n" + page(c.connected, c.host, c.port, c.dbname, engineOf(c), titleTextOf(c), pillOf(c));
+        let s = self.store;
+        // Explicit narrowing rather than `c?.field` optional-chaining: chaining on a
+        // value-struct optional proved fragile under concurrent fragment fetches.
+        let c = s.active();
+        let host = "";
+        let port = "";
+        let dbname = "";
+        if (c != undefined) { host = c.host; port = c.port; dbname = c.dbname; }
+        let body = "<!doctype html>\n" + page(s.isConnected(), host, port, dbname, engineOf(s), titleTextOf(s), pillOf(s));
         return response.Response(Status.Ok, body)
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
 }
 
-// GET /chrome?part=title|status|toolbar: the small connection-aware fragments used by
-// the title bar, status bar and toolbar to refresh themselves after a connect.
+// GET /chrome?part=status|toolbar|title: connection-aware fragments refreshed on connect.
 pub struct ChromeHandler impl RouteHandler {
-    conn: ActiveConnection,
-    init(conn: ActiveConnection) { self.conn = conn; }
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
 
     async fn serve(self: ChromeHandler, ctx: Context): Response {
         let q = ctx.bind<ChromePart>();
-        let c = self.conn;
+        let s = self.store;
+        // Read the active connection's fields via explicit narrowing (not `c?.field`):
+        // optional-chaining on a value-struct optional proved fragile under the concurrent
+        // fragment fetches the browser fires on the `connected` event.
+        //
+        // Plain-text fragments (no markup): pass the string straight to the body.
+        // Response.serialize never escapes the body, so no response.raw() wrap is
+        // needed here (and wrapping a local string as Html corrupts the value).
+        let c = s.active();
+        let host = "";
+        let dbname = "";
+        if (c != undefined) { host = c.host; dbname = c.dbname; }
         if (string.eql(q.part, "status")) {
-            return response.Response(Status.Ok, statusLeft(c.connected, c.host, engineOf(c), c.dbname))
+            return response.Response(Status.Ok, statusLeft(s.isConnected(), host, engineOf(s), dbname))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
-        let text = titleTextOf(c);
-        if (string.eql(q.part, "toolbar")) { text = pillOf(c); }
-        return response.Response(Status.Ok, response.raw(text))
+        let text = titleTextOf(s);
+        if (string.eql(q.part, "toolbar")) { text = pillOf(s); }
+        return response.Response(Status.Ok, text)
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
 }
 
-// Liveness probe. Returns a plain "ok" with 200 so a supervisor (or the desktop shell
-// waiting for the server to come up) can poll readiness cheaply.
+// Liveness probe.
 pub struct HealthzHandler impl RouteHandler {
     init() {}
-
     async fn serve(self: HealthzHandler, ctx: Context): Response {
         return response.Response(Status.Ok, "ok")
             .setHeader("Content-Type", "text/plain; charset=utf-8");

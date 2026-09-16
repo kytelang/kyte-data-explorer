@@ -1,75 +1,89 @@
-// The object-explorer tree: a single connection root, then Databases and Tables
-// folders, each table expandable to its Columns and Indexes. Folders and rows use
-// native <details>/<summary> so expand/collapse needs no JS; folder icons and the
-// table chevron flip via CSS on the [open] state. Each table lazily htmx-loads its
-// columns + indexes into its detail div the first time it is opened.
+// The object explorer: a list of connection roots (all open connections), with the
+// ACTIVE one expanded to its Databases/Tables (SQL) or Collections (Mongo). Clicking a
+// non-active connection selects it (GET /use?id=N), which re-renders the tree against
+// that connection. Adding a connection keeps the existing ones. Folders/rows use native
+// <details>/<summary> so expand/collapse needs no JS.
 import list;
+import string;
+import Shared.Session;
 
-pub fn explorerTree(connected: bool, host: string, port: string, dbname: string, tables: list.List<string>): Html {
-    if (!connected) {
+// The whole explorer body: the empty state when nothing is connected, otherwise one
+// block per open connection. `tables`/`colls` belong to the ACTIVE connection (the only
+// one whose contents are loaded per render).
+pub fn explorerRoots(store: Session.ConnStore, tables: list.List<string>, colls: list.List<string>): Html {
+    if (store.conns.size() == 0) {
         return <div class="oe-empty">
             <span class="icon"><i class="ic ic-plug"></i></span>
             <p>No active database connections.</p>
             <button type="button" hx-get="/connect" hx-target="#modal-root" hx-swap="innerHTML">Add Connection</button>
         </div>;
     }
-    let heading = host + ":" + port + " (" + dbname + ")";
-    return <div class="oe-conn">
-        <div class="oe-conn-head">
-            <div class="label"><span class="bolt"><i class="ic ic-bolt"></i></span><span class="host">{heading}</span></div>
-            <span class="live" title="Active Context"></span>
-        </div>
-        <div class="oe-conn-body">
-            <details open class="oe-folder">
-                <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Databases</span></div></summary>
-                <div class="oe-children">
-                    <div class="oe-row db active"><span><i class="ic ic-db"></i></span><span class="name">{dbname}</span></div>
-                </div>
-            </details>
-            <details open class="oe-folder">
-                <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Tables</span></div></summary>
-                <div class="oe-children">
-                    {if (tables.size() == 0) { <div class="oe-none">No tables found</div>; }}
-                    {for (i in 0..tables.size()) {
-                        let tbl = tables.get(i) ?? "";
-                        <details class="oe-table">
-                            <summary hx-get={"/explorer/table?name=" + tbl}
-                                     hx-trigger="click once"
-                                     hx-target={"#det-" + tbl}
-                                     hx-swap="innerHTML">
-                                <div class="oe-row table"><span><i class="ic ic-table"></i></span><span class="name">{tbl}</span><span class="chev"></span></div>
-                            </summary>
-                            <div class="oe-children" id={"det-" + tbl}><div class="oe-none">Loading...</div></div>
-                        </details>;
-                    }}
-                </div>
-            </details>
-        </div>
+    return <div class="oe-roots">
+        {for (i in 0..store.conns.size()) {
+            let co = store.conns.get(i);
+            if (co != undefined) {
+                connBlock(co, co.id == store.activeId, tables, colls);
+            }
+        }}
     </div>;
 }
 
-// The Mongo variant of the tree: one "Collections" folder listing the database's
-// collections. Each collection carries data-mongo-coll; studio.js turns a click into a
-// find-all on that collection (sets the editor to the collection name and runs it), so
-// clicking a collection shows its documents in the results pane.
-pub fn explorerTreeMongo(host: string, port: string, dbname: string, collections: list.List<string>): Html {
-    let heading = host + ":" + port + " (" + dbname + ")";
-    return <div class="oe-conn">
-        <div class="oe-conn-head">
-            <div class="label"><span class="bolt"><i class="ic ic-bolt"></i></span><span class="host">{heading}</span></div>
-            <span class="live" title="Active Context"></span>
+// One connection root. The header selects the connection; the active connection also
+// renders its expanded object tree below the header.
+fn connBlock(co: Session.Conn, active: bool, tables: list.List<string>, colls: list.List<string>): Html {
+    let idStr = `${co.id}`;
+    let engineTag = if (string.eql(co.dbtype, "mongodb")) "mongo" else "sql";
+    let cls = if (active) "oe-conn active" else "oe-conn";
+    return <div class={cls} data-engine={engineTag} data-conn-id={idStr} data-active={if (active) "1" else "0"}>
+        <div class="oe-conn-head" hx-get={"/use?id=" + idStr} hx-target="#modal-root" hx-swap="innerHTML" title="Use this connection">
+            <div class="label"><span class="bolt"><i class="ic ic-bolt"></i></span><span class="host">{co.heading()}</span></div>
+            {if (active) { <span class="live" title="Active connection"></span>; }}
         </div>
-        <div class="oe-conn-body">
+        {if (active) { connBody(co, tables, colls); }}
+    </div>;
+}
+
+// The expanded body of the active connection: Collections for Mongo, else Databases +
+// Tables. Each table lazily htmx-loads its columns + indexes when first opened.
+fn connBody(co: Session.Conn, tables: list.List<string>, colls: list.List<string>): Html {
+    if (string.eql(co.dbtype, "mongodb")) {
+        return <div class="oe-conn-body">
             <details open class="oe-folder">
                 <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Collections</span></div></summary>
                 <div class="oe-children">
-                    {if (collections.size() == 0) { <div class="oe-none">No collections</div>; }}
-                    {for (i in 0..collections.size()) {
-                        let c = collections.get(i) ?? "";
-                        <div class="oe-row table" data-mongo-coll={c}><span><i class="ic ic-table"></i></span><span class="name">{c}</span></div>;
+                    {if (colls.size() == 0) { <div class="oe-none">No collections</div>; }}
+                    {for (i in 0..colls.size()) {
+                        let c = colls.get(i) ?? "";
+                        <div class="oe-row table" data-mongo-coll={c}><span><i class="ic ic-collection"></i></span><span class="name">{c}</span></div>;
                     }}
                 </div>
             </details>
-        </div>
+        </div>;
+    }
+    return <div class="oe-conn-body">
+        <details open class="oe-folder">
+            <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Databases</span></div></summary>
+            <div class="oe-children">
+                <div class="oe-row db active"><span><i class="ic ic-db"></i></span><span class="name">{co.dbname}</span></div>
+            </div>
+        </details>
+        <details open class="oe-folder">
+            <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Tables</span></div></summary>
+            <div class="oe-children">
+                {if (tables.size() == 0) { <div class="oe-none">No tables found</div>; }}
+                {for (i in 0..tables.size()) {
+                    let tbl = tables.get(i) ?? "";
+                    <details class="oe-table">
+                        <summary hx-get={"/explorer/table?name=" + tbl}
+                                 hx-trigger="click once"
+                                 hx-target={"#det-" + tbl}
+                                 hx-swap="innerHTML">
+                            <div class="oe-row table" data-table={tbl}><span><i class="ic ic-table"></i></span><span class="name">{tbl}</span><span class="chev"></span></div>
+                        </summary>
+                        <div class="oe-children" id={"det-" + tbl}><div class="oe-none">Loading...</div></div>
+                    </details>;
+                }}
+            </div>
+        </details>
     </div>;
 }

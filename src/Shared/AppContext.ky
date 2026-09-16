@@ -14,12 +14,13 @@ import Shared.Session;
 pub class AppContext {
     /// The web application being configured; features register routes on it.
     pub app: App,
-    /// The one active database connection, shared across features and mutated by
-    /// the connect handler on a successful connect.
-    pub conn: ActiveConnection,
+    /// The registry of open database connections (with the active selection), shared
+    /// across features. The connect handler appends to it; the explorer/query/DDL
+    /// handlers read the active connection from it.
+    pub store: ConnStore,
 
-    init(app: App, conn: ActiveConnection) {
+    init(app: App, store: ConnStore) {
         self.app = app;
-        self.conn = conn;
+        self.store = store;
     }
 }

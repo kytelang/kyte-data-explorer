@@ -4,5 +4,6 @@ import Features.Connections.handler;
 
 pub fn registerConnections(ctx: AppContext): void {
     ctx.app.get("/connect", GetConnectFormHandler());
-    ctx.app.post("/connect", ConnectHandler(ctx.conn));
+    ctx.app.post("/connect", ConnectHandler(ctx.store));
+    ctx.app.get("/use", UseConnHandler(ctx.store));
 }

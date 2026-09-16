@@ -3,6 +3,44 @@
 // offline copy comes before the desktop build); its cross-origin language workers are
 // satisfied with a tiny data-URI proxy that importScripts the real worker.
 
+// ---- Theme (light / dark) ----------------------------------------------------------
+// Apply the saved theme synchronously (this script is in <head>, so it runs before the
+// body paints and there is no flash of the wrong theme). The CSS treats the bare :root
+// as dark and only overrides tokens under [data-theme="light"], so "dark" is a no-op
+// attribute that we still set for clarity and future themes.
+(function () {
+  try {
+    var t = localStorage.getItem("kyte-studio-theme") || "dark";
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+
+// The toggle button shows the theme you'd switch TO: a sun while dark, a moon while light.
+function studioThemeIcon() {
+  var t = document.documentElement.getAttribute("data-theme") || "dark";
+  var btn = document.getElementById("theme-toggle");
+  if (btn) {
+    var i = btn.querySelector("i");
+    if (i) i.className = "ic " + (t === "light" ? "ic-moon" : "ic-sun");
+  }
+}
+
+function studioToggleTheme() {
+  var cur = document.documentElement.getAttribute("data-theme") || "dark";
+  var next = cur === "light" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("kyte-studio-theme", next); } catch (e) {}
+  studioThemeIcon();
+  // Keep the Monaco editor in step with the app theme.
+  if (window.monaco && window.__ed) {
+    try { monaco.editor.setTheme(next === "light" ? "vs" : "vs-dark"); } catch (e) {}
+  }
+}
+
+function studioMonacoTheme() {
+  return (document.documentElement.getAttribute("data-theme") || "dark") === "light" ? "vs" : "vs-dark";
+}
+
 var MONACO_BASE = "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min";
 
 window.MonacoEnvironment = {
@@ -13,6 +51,68 @@ window.MonacoEnvironment = {
     return "data:text/javascript;charset=utf-8," + encodeURIComponent(src);
   },
 };
+
+// ---- Query tabs -------------------------------------------------------------------
+// Multiple query buffers backed by ONE Monaco editor: each tab stores its own SQL text;
+// switching saves the current editor content to the active tab and loads the target's.
+// The active tab's text is what the hidden #sql-src (and therefore Run) submits.
+window.__tabs = [];
+window.__activeTab = null;
+var __tabSeq = 0;
+
+function studioActiveTabObj() {
+  for (var i = 0; i < window.__tabs.length; i++) if (window.__tabs[i].id === window.__activeTab) return window.__tabs[i];
+  return null;
+}
+function studioRenderTabs() {
+  var row = document.getElementById("tabrow");
+  if (!row) return;
+  row.innerHTML = "";
+  window.__tabs.forEach(function (t) {
+    var el = document.createElement("div");
+    el.className = "tab" + (t.id === window.__activeTab ? " active" : "");
+    el.setAttribute("data-tab-id", t.id);
+    el.innerHTML =
+      '<span class="tab-label"><i class="ic ic-doc"></i> ' + t.name + "</span>" +
+      '<span class="close" data-close-tab="' + t.id + '" title="Close"><i class="ic ic-x"></i></span>';
+    row.appendChild(el);
+  });
+}
+function studioSaveActiveTab() {
+  var t = studioActiveTabObj();
+  if (t && window.__ed) t.sql = window.__ed.getValue();
+}
+function studioSwitchTab(id) {
+  if (id === window.__activeTab) return;
+  studioSaveActiveTab();
+  window.__activeTab = id;
+  var t = studioActiveTabObj();
+  if (window.__ed && t) window.__ed.setValue(t.sql || "");
+  studioRenderTabs();
+}
+function studioNewTab(seed) {
+  __tabSeq++;
+  var id = "t" + __tabSeq;
+  window.__tabs.push({ id: id, name: "Query " + __tabSeq + ".sql", sql: seed || "" });
+  studioSaveActiveTab();
+  window.__activeTab = id;
+  if (window.__ed) window.__ed.setValue(seed || "");
+  studioRenderTabs();
+}
+function studioCloseTab(id) {
+  var i = -1;
+  for (var k = 0; k < window.__tabs.length; k++) if (window.__tabs[k].id === id) { i = k; break; }
+  if (i < 0) return;
+  var wasActive = window.__activeTab === id;
+  window.__tabs.splice(i, 1);
+  if (window.__tabs.length === 0) { studioNewTab(""); return; }
+  if (wasActive) {
+    window.__activeTab = window.__tabs[Math.max(0, i - 1)].id;
+    var t = studioActiveTabObj();
+    if (window.__ed && t) window.__ed.setValue(t.sql || "");
+  }
+  studioRenderTabs();
+}
 
 // Turn the #editor div into a Monaco SQL editor. Idempotent (disposes any prior editor).
 function initSqlEditor() {
@@ -25,22 +125,30 @@ function initSqlEditor() {
       window.__ed = null;
     }
     var hidden = document.getElementById("sql-src");
-    var seed = hidden && hidden.value
-      ? hidden.value
-      : "-- Write SQL and press Run (or Cmd/Ctrl+Enter)\nSELECT name FROM sys.tables;";
+    // Seed the first tab once, then always drive the editor from the active tab.
+    if (window.__tabs.length === 0) {
+      studioNewTab("-- Write SQL and press Run (or Cmd/Ctrl+Enter)\nSELECT name FROM sys.tables");
+    }
+    var active = studioActiveTabObj();
     window.__ed = monaco.editor.create(el, {
-      value: seed,
+      value: (active && active.sql) || "",
       language: "sql",
-      theme: "vs-dark",
+      theme: studioMonacoTheme(),
       minimap: { enabled: false },
       automaticLayout: true,
       fontSize: 13,
       scrollBeyondLastLine: false,
       lineNumbersMinChars: 3,
     });
-    var sync = function () { if (hidden) hidden.value = window.__ed.getValue(); };
+    // Keep the hidden field (what Run submits) and the active tab's buffer in step.
+    var sync = function () {
+      if (hidden) hidden.value = window.__ed.getValue();
+      var t = studioActiveTabObj();
+      if (t) t.sql = window.__ed.getValue();
+    };
     window.__ed.onDidChangeModelContent(sync);
     sync();
+    studioRenderTabs();
     window.__ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, function () {
       sync();
       var btn = document.getElementById("run-btn");
@@ -59,8 +167,84 @@ function studioResultsTab(which) {
   });
 }
 
+// ---- Explorer action gating -------------------------------------------------------
+// "New Table" is enabled only when a SQL database is connected (a `data-engine="sql"`
+// connection root is present); "New Index" only when a table row is selected in that
+// tree. The active table is tracked on window.__selTable and prefilled into the Create
+// Index dialog. Any explorer refresh (reconnect / manual refresh) replaces the tree DOM,
+// so selection is cleared and the buttons re-evaluated.
+window.__selTable = null;
+
+function studioSyncExplorerButtons() {
+  // Gate on the ACTIVE connection (the one whose tree is expanded and that queries run
+  // against), not just the first connection in the list.
+  var conn = document.querySelector("#explorer-body .oe-conn.active") ||
+             document.querySelector("#explorer-body .oe-conn");
+  var isSql = !!(conn && conn.getAttribute("data-engine") === "sql");
+  var tbtn = document.getElementById("btn-new-table");
+  var ibtn = document.getElementById("btn-new-index");
+  if (tbtn) tbtn.disabled = !isSql;
+  // A stored selection only stays valid if that table still exists in the current tree.
+  var stillThere = window.__selTable &&
+    document.querySelector('#explorer-body .oe-row.table[data-table="' + window.__selTable + '"]');
+  if (!stillThere) window.__selTable = null;
+  if (ibtn) ibtn.disabled = !(isSql && window.__selTable);
+}
+
+// ---- Create Table field grid ------------------------------------------------------
+// The grid rows do not post their own inputs; this serialises them into the hidden
+// `columns` textarea ("name TYPE [NOT NULL]" per line) and the hidden `pk` input that the
+// server binds. Kept in sync on every edit so a submit always sends the current grid.
+function studioSerializeColumns() {
+  var rows = document.getElementById("ct-rows");
+  if (!rows) return;
+  var lines = [], pk = "";
+  rows.querySelectorAll(".col-row").forEach(function (r) {
+    var name = (r.querySelector(".col-name").value || "").trim();
+    if (!name) return;
+    var type = r.querySelector(".col-type").value;
+    var notNull = r.querySelector(".col-null").checked;
+    lines.push(name + " " + type + (notNull ? " NOT NULL" : ""));
+    if (r.querySelector(".col-pk").checked) pk = name;
+  });
+  var cols = document.getElementById("ct-columns");
+  if (cols) cols.value = lines.join("\n");
+  var pkf = document.getElementById("ct-pk");
+  if (pkf) pkf.value = pk;
+}
+
+function studioAddField() {
+  var rows = document.getElementById("ct-rows");
+  if (!rows) return;
+  // Clone an existing row (there is always at least one — delete keeps a minimum of one),
+  // then reset it to defaults. No hidden prototype, so Add can never be left with nothing
+  // to clone and there is no stray row to leak onto the page.
+  var src = rows.querySelector(".col-row");
+  if (!src) return;
+  var row = src.cloneNode(true);
+  row.querySelector(".col-name").value = "";
+  var sel = row.querySelector(".col-type");
+  if (sel) sel.selectedIndex = 0;
+  row.querySelector(".col-null").checked = false;
+  row.querySelector(".col-pk").checked = false;
+  rows.appendChild(row);
+  studioSerializeColumns();
+}
+
+function studioSelectTable(name) {
+  window.__selTable = name;
+  document.querySelectorAll("#explorer-body .oe-row.table.selected").forEach(function (r) {
+    r.classList.remove("selected");
+  });
+  var row = document.querySelector('#explorer-body .oe-row.table[data-table="' + name + '"]');
+  if (row) row.classList.add("selected");
+  studioSyncExplorerButtons();
+}
+
 // The editor is part of the shell, so build it once the page is ready.
 document.addEventListener("DOMContentLoaded", function () {
+  studioThemeIcon();
+  studioSyncExplorerButtons();
   if (document.getElementById("editor")) initSqlEditor();
 });
 
@@ -119,8 +303,129 @@ function studioCopyResults() {
   if (navigator.clipboard) { navigator.clipboard.writeText(text); }
 }
 
+// ---- Result export (CSV / JSON / Excel) -------------------------------------------
+// Works for both a SQL result grid and the Mongo documents view. Grids export as a
+// header + rows matrix; Mongo docs export as their JSON (and, for CSV/Excel, are
+// flattened to a union-of-keys matrix). Excel is an HTML-table .xls, which Excel and
+// Numbers open natively without a real xlsx writer.
+function studioTriggerDownload(filename, text, mime) {
+  var blob = new Blob([text], { type: mime });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+function studioCsvCell(v) {
+  if (v === null || v === undefined) return "";
+  v = String(v);
+  return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+function studioHtmlCell(v) {
+  return String(v === null || v === undefined ? "" : v)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+// Returns {head:[...], rows:[[...]]} from the SQL grid, or null if there is no grid.
+function studioGridMatrix() {
+  var table = document.querySelector("#results-body table.grid");
+  if (!table) return null;
+  var head = Array.prototype.map.call(table.querySelectorAll("thead th"), function (th) { return th.textContent; });
+  var rows = Array.prototype.map.call(table.querySelectorAll("tbody tr"), function (tr) {
+    return Array.prototype.map.call(tr.querySelectorAll("td"), function (td) {
+      return td.classList.contains("nullcell") ? null : td.textContent;
+    });
+  });
+  return { head: head, rows: rows };
+}
+// The Mongo documents view parsed to objects, or null if not showing documents.
+function studioDocObjects() {
+  var els = document.querySelectorAll("#results-body .doc-json");
+  if (!els.length) return null;
+  return Array.prototype.map.call(els, function (el) {
+    try { return JSON.parse(el.textContent); } catch (e) { return { value: el.textContent }; }
+  });
+}
+function studioExport(fmt) {
+  var grid = studioGridMatrix();
+  var docs = grid ? null : studioDocObjects();
+  if (!grid && !docs) return; // nothing to export
+
+  if (fmt === "json") {
+    var payload;
+    if (grid) {
+      payload = grid.rows.map(function (r) {
+        var o = {};
+        grid.head.forEach(function (h, i) { o[h] = r[i]; });
+        return o;
+      });
+    } else {
+      payload = docs;
+    }
+    studioTriggerDownload("kyte-results.json", JSON.stringify(payload, null, 2), "application/json");
+    return;
+  }
+
+  // CSV / Excel need a header+rows matrix; build one from docs when needed.
+  var head, rows;
+  if (grid) {
+    head = grid.head; rows = grid.rows;
+  } else {
+    head = [];
+    docs.forEach(function (o) { Object.keys(o).forEach(function (k) { if (head.indexOf(k) < 0) head.push(k); }); });
+    rows = docs.map(function (o) {
+      return head.map(function (k) {
+        var v = o[k];
+        if (v === undefined) return null;
+        return (v !== null && typeof v === "object") ? JSON.stringify(v) : v;
+      });
+    });
+  }
+
+  if (fmt === "csv") {
+    var lines = [head.map(studioCsvCell).join(",")];
+    rows.forEach(function (r) { lines.push(r.map(studioCsvCell).join(",")); });
+    studioTriggerDownload("kyte-results.csv", lines.join("\r\n"), "text/csv;charset=utf-8");
+  } else { // xls: an HTML table Excel/Numbers open directly
+    var html = '<html><head><meta charset="utf-8"></head><body><table border="1"><thead><tr>' +
+      head.map(function (h) { return "<th>" + studioHtmlCell(h) + "</th>"; }).join("") +
+      "</tr></thead><tbody>" +
+      rows.map(function (r) {
+        return "<tr>" + r.map(function (c) { return "<td>" + studioHtmlCell(c) + "</td>"; }).join("") + "</tr>";
+      }).join("") +
+      "</tbody></table></body></html>";
+    studioTriggerDownload("kyte-results.xls", html, "application/vnd.ms-excel");
+  }
+}
+
 // Delegated clicks: results tabs, pager, copy, and closing the connection modal.
 document.addEventListener("click", function (e) {
+  if (e.target.closest && e.target.closest("#theme-toggle")) { studioToggleTheme(); return; }
+
+  // Query tabs: new / close / switch. Close is checked before switch (it sits inside a tab).
+  if (e.target.closest && e.target.closest("#tab-add")) { studioNewTab(""); return; }
+  var closeTab = e.target.closest ? e.target.closest("[data-close-tab]") : null;
+  if (closeTab) { studioCloseTab(closeTab.getAttribute("data-close-tab")); return; }
+  var tabEl = e.target.closest ? e.target.closest(".tab[data-tab-id]") : null;
+  if (tabEl) { studioSwitchTab(tabEl.getAttribute("data-tab-id")); return; }
+
+  // Create Table grid: add / remove field rows.
+  if (e.target.closest && e.target.closest("#ct-add")) { studioAddField(); return; }
+  var del = e.target.closest ? e.target.closest(".col-del") : null;
+  if (del) {
+    var rows = document.getElementById("ct-rows");
+    if (rows && rows.querySelectorAll(".col-row").length > 1) del.closest(".col-row").remove();
+    studioSerializeColumns();
+    return;
+  }
+
+  // Selecting a SQL table row (data-table) enables the "New Index" action and targets it.
+  // (Mongo collection rows carry data-mongo-coll instead and are handled separately.)
+  var trow = e.target.closest ? e.target.closest(".oe-row.table[data-table]") : null;
+  if (trow) { studioSelectTable(trow.getAttribute("data-table")); /* fall through: the summary still toggles */ }
+
   var tab = e.target.closest ? e.target.closest(".results-tab") : null;
   if (tab) { studioResultsTab(tab.getAttribute("data-tab")); return; }
 
@@ -136,6 +441,9 @@ document.addEventListener("click", function (e) {
     return;
   }
   if (e.target.closest && e.target.closest("[data-copy]")) { studioCopyResults(); return; }
+
+  var exp = e.target.closest ? e.target.closest("[data-export]") : null;
+  if (exp) { studioExport(exp.getAttribute("data-export")); return; }
 
   // Mongo: clicking a collection runs find-all on it (puts the collection name in the
   // editor and clicks Run). The query box for Mongo is "<collection> [field=value]".
@@ -170,4 +478,35 @@ document.addEventListener("htmx:afterSwap", function (e) {
     studioResultsTab(isErr ? "messages" : "results");
     studioInitResults(e.target);
   }
+  // The explorer tree was (re)loaded: re-evaluate the New Table / New Index enablement.
+  // The swap can land on #explorer-body itself (on `connected`) or on an inner node (the
+  // load-trigger `.oe-loading` on a fresh page load, or a table's lazy detail), so match
+  // anything inside the explorer.
+  if (e.target && (e.target.id === "explorer-body" || (e.target.closest && e.target.closest("#explorer-body")))) {
+    studioSyncExplorerButtons();
+  }
+  // The Create Index dialog just opened: prefill the target table from the selection.
+  if (e.target && e.target.id === "modal-root" && window.__selTable) {
+    var ti = document.getElementById("ddl-index-table");
+    if (ti && !ti.value) ti.value = window.__selTable;
+  }
+  // The Create Table dialog just opened: initialise the hidden serialised fields.
+  if (e.target && e.target.id === "modal-root" && document.getElementById("ct-rows")) {
+    studioSerializeColumns();
+  }
+});
+
+// Keep the Create Table hidden fields in sync as the grid is edited; a checked PK is
+// exclusive (single-column primary key, portable across engines).
+document.addEventListener("change", function (e) {
+  if (!(e.target.closest && e.target.closest("#ct-rows"))) return;
+  if (e.target.classList.contains("col-pk") && e.target.checked) {
+    document.querySelectorAll("#ct-rows .col-pk").forEach(function (cb) {
+      if (cb !== e.target) cb.checked = false;
+    });
+  }
+  studioSerializeColumns();
+});
+document.addEventListener("input", function (e) {
+  if (e.target.closest && e.target.closest("#ct-rows")) studioSerializeColumns();
 });

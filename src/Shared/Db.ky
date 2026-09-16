@@ -273,12 +273,46 @@ pub async fn listIndexes(dbtype: string, dsn: string, table: string): list.List<
 // BEFORE the pool is closed, so the returned `QueryResult` never borrows freed driver
 // buffers. Rows are capped at QUERY_ROW_CAP; `truncated` says whether more existed.
 // A failed statement returns ok=false with the driver's message in `error`.
+// Make an editor buffer safe to hand to the driver as a single statement. kaidb's parser
+// is strict: it rejects both a trailing `;` and `--` line comments (UnexpectedToken),
+// whereas the SQL servers tolerate them. So we drop whole-line `--` comments and any
+// trailing terminator/whitespace. This is line-level (only lines whose trimmed text
+// starts with `--`), so an inline `--` inside a string literal is left untouched.
+fn sanitizeSql(sql: string): string {
+    let lines = string.split(sql, "\n");
+    let out = "";
+    let n = 0;
+    let i = 0;
+    while (i < lines.size()) {
+        let line = lines.get(i) ?? "";
+        let t = string.trim(line);
+        let isComment = t.length >= 2 && string.eql(string.slice(t, 0, 2), "--");
+        if (!isComment) {
+            if (n > 0) { out = out + "\n"; }
+            out = out + line;
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    // Strip trailing terminator + whitespace.
+    let s = string.trim(out);
+    while (s.length > 0) {
+        let last = string.slice(s, s.length - 1, s.length);
+        if (string.eql(last, ";") || string.eql(last, " ") || string.eql(last, "\n") || string.eql(last, "\t") || string.eql(last, "\r")) {
+            s = string.slice(s, 0, s.length - 1);
+        } else {
+            break;
+        }
+    }
+    return s;
+}
+
 pub async fn runQuery(dbtype: string, dsn: string, sql: string): QueryResult {
     let r = QueryResult();
     let p = poolFor(dbtype, dsn);
     let conn = await p.acquire();
     let t0 = datetime.nowNs();
-    let rs = await conn.query(sql, list.List<db.DbValue>());
+    let rs = await conn.query(sanitizeSql(sql), list.List<db.DbValue>());
     let t1 = datetime.nowNs();
     r.elapsedMs = (t1 - t0) / 1000000;
     if (!rs.ok()) {

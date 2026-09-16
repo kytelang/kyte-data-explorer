@@ -12,12 +12,13 @@ import Features.Query.views.results_pane;
 import Features.Query.views.mongo_results;
 
 pub struct RunQueryHandler impl RouteHandler {
-    conn: ActiveConnection,
-    init(conn: ActiveConnection) { self.conn = conn; }
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
 
     async fn serve(self: RunQueryHandler, ctx: Context): Response {
         let f = ctx.bind<QueryForm>();
-        if (!self.conn.connected) {
+        let c = self.store.active();
+        if (c == undefined) {
             let r = Db.QueryResult();
             r.error = "Not connected. Connect a database first.";
             return response.Response(Status.Ok, resultsPane(r))
@@ -25,13 +26,13 @@ pub struct RunQueryHandler impl RouteHandler {
         }
         // Mongo runs a find over a collection, not SQL: the query box is
         // "<collection> [field=value]". Documents come back as JSON blocks.
-        if (string.eql(self.conn.dbtype, "mongodb")) {
+        if (string.eql(c.dbtype, "mongodb")) {
             let cmd = parseFind(f.sql);
-            let mres = await mongoFind(self.conn.dsn, self.conn.dbname, cmd.coll, cmd.field, cmd.value, Db.QUERY_ROW_CAP);
+            let mres = await mongoFind(c.dsn, c.dbname, cmd.coll, cmd.field, cmd.value, Db.QUERY_ROW_CAP);
             return response.Response(Status.Ok, mongoResultsPane(mres))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
-        let result = await runQuery(self.conn.dbtype, self.conn.dsn, f.sql);
+        let result = await runQuery(c.dbtype, c.dsn, f.sql);
         return response.Response(Status.Ok, resultsPane(result))
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }

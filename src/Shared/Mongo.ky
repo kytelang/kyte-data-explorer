@@ -111,7 +111,9 @@ pub async fn mongoFind(dsn: string, dbname: string, coll: string, field: string,
     let f = mongodb.filter();
     if (!string.eql(field, "")) { f = f.eqStr(field, value); }
     let opts = mongodb.findOptions().withLimit(limit as long);
-    let cur = await conn.database(dbname).collection(coll).find(f, opts);
+    let dbh = conn.database(dbname);
+    let collh = dbh.collection(coll);
+    let cur = await collh.find(f, opts);
     let docs = await cur.toList();
     let t1 = datetime.nowNs();
     r.elapsedMs = (t1 - t0) / 1000000;

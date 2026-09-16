@@ -1,0 +1,11 @@
+// The DDL feature route table: serve the Create Table / Create Index modals and run the
+// generated DDL. Registered once from the composition root.
+import Shared.AppContext;
+import Features.Ddl.handler;
+
+pub fn registerDdl(ctx: AppContext): void {
+    ctx.app.get("/ddl/table", GetCreateTableHandler(ctx.store));
+    ctx.app.post("/ddl/table", CreateTableHandler(ctx.store));
+    ctx.app.get("/ddl/index", GetCreateIndexHandler(ctx.store));
+    ctx.app.post("/ddl/index", CreateIndexHandler(ctx.store));
+}

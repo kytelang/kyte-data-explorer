@@ -1,45 +1,34 @@
-// The active connection: the studio's one piece of app-lifetime mutable state.
+// The studio's connection state: a registry of open connections plus which one is
+// "active" (the target for queries and DDL). The studio is a single-user desktop app
+// (one webview, one server process, single-reactor), so this shared mutable object is
+// touched by one handler at a time and needs no lock.
 //
-// The studio is a single-user desktop app (one webview, one server process), so a
-// single shared "current connection" is the right model, not a per-request session
-// cookie. When the user connects on the Connections screen we record the target here;
-// the explorer and (later) the query panel read it to know what to introspect and
-// query against. Kyte web is single-reactor, so this shared mutable object is touched
-// by one handler at a time and needs no lock.
-//
-// We deliberately store only the connection PARAMETERS, not a live pool. Each
-// introspection or query request opens a short-lived pool from these parameters, runs
-// its work, and tears it down (see Shared/Db.ky). That keeps a live, driver-varying
-// pool out of a long-lived object field, which is the safe, proven shape; a pooled
-// fast path can come later once the studio's query volume justifies it.
+// We store only connection PARAMETERS, never a live pool: each introspection/query
+// request opens a short-lived pool from these parameters and tears it down (Shared/Db.ky).
 import string;
+import list;
 
-pub class ActiveConnection {
-    /// True once a connect probe has succeeded and the fields below are populated.
-    pub connected: bool,
-    /// The driver key: "kaidb", "postgres", "mysql", "mssql" or "mongodb".
-    pub dbtype: string,
-    /// The driver-specific connection string, ready to hand to the pool.
-    pub dsn: string,
-    /// Display fields, kept for the status bar and the explorer header. These never
-    /// carry the password, which lives only inside `dsn`.
+// One open connection. `id` is a small stable integer the UI uses to select it.
+//
+// This is a value `struct`, not a `class`, on purpose. The studio is a single-reactor
+// server whose handlers interleave at `await` points, and several fragments (explorer,
+// status bar, toolbar) read the connection concurrently on page load. If `get()`/`active()`
+// returned a shared class reference, one coroutine could hold that reference across a DB
+// `await` while another coroutine touched the store, aliasing and freeing it underneath
+// (a use-after-free). As a value struct, every lookup hands back an independent COPY of the
+// connection's data, so no coroutine can free another's view. The store (`ConnStore`) stays
+// a class because it is the one shared, mutable registry, only ever mutated inside its own
+// synchronous methods (which run atomically on the single reactor).
+pub struct Conn {
+    pub id: int,
+    pub dbtype: string,   // "kaidb" | "postgres" | "mysql" | "mssql" | "mongodb"
+    pub dsn: string,      // driver connection string (carries the password)
     pub host: string,
     pub port: string,
     pub dbname: string,
 
-    init() {
-        self.connected = false;
-        self.dbtype = "";
-        self.dsn = "";
-        self.host = "";
-        self.port = "";
-        self.dbname = "";
-    }
-
-    /// Records a successful connection. Called by the connect handler once its probe
-    /// comes back reachable, so subsequent explorer requests know the target.
-    pub fn set(self: ActiveConnection, dbtype: string, dsn: string, host: string, port: string, dbname: string): void {
-        self.connected = true;
+    init(id: int, dbtype: string, dsn: string, host: string, port: string, dbname: string) {
+        self.id = id;
         self.dbtype = dbtype;
         self.dsn = dsn;
         self.host = host;
@@ -47,11 +36,69 @@ pub class ActiveConnection {
         self.dbname = dbname;
     }
 
-    /// A short "kaidb 127.0.0.1:3009/default" style label for the title and status bars.
-    pub fn label(self: ActiveConnection): string {
-        if (!self.connected) { return "Not connected"; }
-        let db = self.dbname;
-        if (string.eql(db, "")) { db = "default"; }
-        return self.dbtype + " " + self.host + ":" + self.port + "/" + db;
+    fn db(self: Conn): string {
+        if (string.eql(self.dbname, "")) { return "default"; }
+        return self.dbname;
+    }
+
+    // "host:port (db)" - the connection-root heading in the explorer and the toolbar.
+    pub fn heading(self: Conn): string {
+        return self.host + ":" + self.port + " (" + self.db() + ")";
+    }
+
+    // "kaidb 127.0.0.1:3009/default" - a compact one-line label.
+    pub fn label(self: Conn): string {
+        return self.dbtype + " " + self.host + ":" + self.port + "/" + self.db();
+    }
+}
+
+// The set of open connections and the active selection. Adding a connection APPENDS
+// (existing connections are kept) and makes the new one active.
+pub class ConnStore {
+    pub conns: list.List<Conn>,
+    pub activeId: int,
+    pub nextId: int,
+
+    init() {
+        self.conns = list.List<Conn>();
+        self.activeId = -1;
+        self.nextId = 1;
+    }
+
+    // Append a new connection and select it. Returns its id.
+    pub fn add(self: ConnStore, dbtype: string, dsn: string, host: string, port: string, dbname: string): int {
+        let id = self.nextId;
+        self.nextId = id + 1;
+        self.conns.push(Conn(id, dbtype, dsn, host, port, dbname));
+        self.activeId = id;
+        return id;
+    }
+
+    pub fn isConnected(self: ConnStore): bool {
+        return self.conns.size() > 0 && self.activeId >= 0;
+    }
+
+    // The connection with `id`, or undefined if none.
+    pub fn get(self: ConnStore, id: int): Conn | undefined {
+        let i = 0;
+        while (i < self.conns.size()) {
+            let c = self.conns.get(i);
+            if (c != undefined) {
+                if (c.id == id) { return c; }
+            }
+            i = i + 1;
+        }
+        return undefined;
+    }
+
+    // The active connection, or undefined when nothing is connected.
+    pub fn active(self: ConnStore): Conn | undefined {
+        if (self.activeId < 0) { return undefined; }
+        return self.get(self.activeId);
+    }
+
+    // Select `id` as active if it exists.
+    pub fn setActive(self: ConnStore, id: int): void {
+        if (self.get(id) != undefined) { self.activeId = id; }
     }
 }

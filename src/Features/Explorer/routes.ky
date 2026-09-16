@@ -5,6 +5,6 @@ import Shared.AppContext;
 import Features.Explorer.handler;
 
 pub fn registerExplorer(ctx: AppContext): void {
-    ctx.app.get("/explorer", ExplorerHandler(ctx.conn));
-    ctx.app.get("/explorer/table", TableDetailHandler(ctx.conn));
+    ctx.app.get("/explorer", ExplorerHandler(ctx.store));
+    ctx.app.get("/explorer/table", TableDetailHandler(ctx.store));
 }

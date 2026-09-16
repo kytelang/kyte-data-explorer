@@ -1,0 +1,203 @@
+// The DDL feature's bound form shapes and the DDL string builders. `ctx.bind<T>()`
+// fills these from the POST body by field name. The builders assemble portable
+// `CREATE TABLE` / `CREATE INDEX` statements that both Postgres and kaidb accept; the
+// user supplies DB-valid column types verbatim (e.g. `integer`, `text`, `varchar(100)`),
+// so we do not translate types per driver. Identifiers are sanitised (a `;` and quotes
+// are stripped) so a field cannot smuggle a second statement into the exec.
+import string;
+import list;
+
+// New-table form: a table name, one "name type" per line in a textarea, and an optional
+// primary-key column.
+@serializable
+pub struct CreateTableForm {
+    pub table: string,
+    pub columns: string,
+    pub pk: string,
+    init() { self.table = ""; self.columns = ""; self.pk = ""; }
+}
+
+// New-index form: index name, target table, comma-separated columns, a unique flag
+// (the checkbox posts "on" when ticked, "" otherwise), and the chosen index type/method
+// (engine-specific, e.g. btree/hash/gist on Postgres, CLUSTERED on MSSQL).
+@serializable
+pub struct CreateIndexForm {
+    pub idxname: string,
+    pub table: string,
+    pub columns: string,
+    pub unique: string,
+    pub indextype: string,
+    init() { self.idxname = ""; self.table = ""; self.columns = ""; self.unique = ""; self.indextype = ""; }
+}
+
+fn strList(): list.List<string> { return list.List<string>(); }
+
+// The column data types offered in the Create Table field grid for a given engine. The
+// user can still hand-edit, but the dropdown surfaces the common, engine-valid choices so
+// nobody has to remember, say, that kaidb wants INTEGER (not INT32) or that MSSQL uses BIT
+// for booleans. The first entry is the default selection.
+pub fn columnTypesFor(dbtype: string): list.List<string> {
+    let t = strList();
+    if (string.eql(dbtype, "postgres")) {
+        t.push("integer"); t.push("bigint"); t.push("text"); t.push("varchar(255)"); t.push("boolean");
+        t.push("double precision"); t.push("numeric"); t.push("date"); t.push("timestamp"); t.push("timestamptz"); t.push("uuid"); t.push("jsonb");
+        return t;
+    }
+    if (string.eql(dbtype, "mysql")) {
+        t.push("INT"); t.push("BIGINT"); t.push("VARCHAR(255)"); t.push("TEXT"); t.push("BOOLEAN");
+        t.push("DOUBLE"); t.push("DECIMAL(10,2)"); t.push("DATE"); t.push("DATETIME"); t.push("TIMESTAMP"); t.push("JSON");
+        return t;
+    }
+    if (string.eql(dbtype, "mssql")) {
+        t.push("INT"); t.push("BIGINT"); t.push("NVARCHAR(255)"); t.push("VARCHAR(255)"); t.push("BIT");
+        t.push("FLOAT"); t.push("DECIMAL(10,2)"); t.push("DATE"); t.push("DATETIME2"); t.push("UNIQUEIDENTIFIER");
+        return t;
+    }
+    // kaidb (default). INTEGER/TEXT are the catalogued spellings; INT32 is not a keyword.
+    t.push("INTEGER"); t.push("BIGINT"); t.push("TEXT"); t.push("DOUBLE"); t.push("BOOLEAN");
+    return t;
+}
+
+// The index types/methods offered for a given engine. Empty means the engine has no
+// user-selectable type (kaidb), so the UI omits the selector entirely.
+pub fn indexTypesFor(dbtype: string): list.List<string> {
+    let t = strList();
+    if (string.eql(dbtype, "postgres")) { t.push("btree"); t.push("hash"); t.push("gist"); t.push("gin"); t.push("brin"); return t; }
+    if (string.eql(dbtype, "mysql")) { t.push("BTREE"); t.push("HASH"); return t; }
+    if (string.eql(dbtype, "mssql")) { t.push("NONCLUSTERED"); t.push("CLUSTERED"); return t; }
+    return t;   // kaidb: no selectable index method
+}
+
+// Sanitise an identifier: trim, and cut at the first character that could break out of
+// the identifier position (`;`, quotes, backtick). Returns "" for an empty result.
+pub fn ident(raw: string): string {
+    let s = string.trim(raw);
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+        let ch = string.slice(s, i, i + 1);
+        if (string.eql(ch, ";") || string.eql(ch, "'") || string.eql(ch, "\"") || string.eql(ch, "`")) { break; }
+        out = out + ch;
+        i = i + 1;
+    }
+    return string.trim(out);
+}
+
+// A single column definition parsed from one textarea line: the first token is the name,
+// the remainder (which may contain spaces, e.g. `varchar(100)`) is the type.
+fn parseColumnLine(line: string): string {
+    let s = string.trim(line);
+    if (string.eql(s, "")) { return ""; }
+    let sp = string.indexOf(s, " ");
+    if (sp == -1) { return ""; }   // a name with no type is not a valid column
+    let name = ident(string.slice(s, 0, sp));
+    let typ = string.trim(string.slice(s, sp + 1, s.length));
+    // The type may not contain a statement separator.
+    let semi = string.indexOf(typ, ";");
+    if (semi != -1) { typ = string.trim(string.slice(typ, 0, semi)); }
+    if (string.eql(name, "") || string.eql(typ, "")) { return ""; }
+    return name + " " + typ;
+}
+
+// Build `CREATE TABLE <t> (<cols>[, PRIMARY KEY (<pk>)])`. Returns "" when the table
+// name is blank or no valid column lines were given (the handler surfaces the error).
+pub fn buildCreateTable(table: string, columns: string, pk: string): string {
+    let t = ident(table);
+    if (string.eql(t, "")) { return ""; }
+    let lines = string.split(columns, "\n");
+    let defs = list.List<string>();
+    let i = 0;
+    while (i < lines.size()) {
+        let def = parseColumnLine(lines.get(i) ?? "");
+        if (!string.eql(def, "")) { defs.push(def); }
+        i = i + 1;
+    }
+    if (defs.size() == 0) { return ""; }
+    let pkCol = ident(pk);
+    let body = "";
+    let j = 0;
+    while (j < defs.size()) {
+        if (j > 0) { body = body + ", "; }
+        let def = defs.get(j) ?? "";
+        // Attach the primary key as a COLUMN-LEVEL constraint (`id integer PRIMARY KEY`)
+        // on the matching column, not a table-level `PRIMARY KEY (col)` clause: kaidb's
+        // parser accepts the column form but rejects the table-level constraint, and the
+        // column form is equally valid on Postgres.
+        if (!string.eql(pkCol, "")) {
+            let sp = string.indexOf(def, " ");
+            if (sp != -1 && string.eql(string.slice(def, 0, sp), pkCol)) { def = def + " PRIMARY KEY"; }
+        }
+        body = body + def;
+        j = j + 1;
+    }
+    return "CREATE TABLE " + t + " (" + body + ")";
+}
+
+// Join a comma-separated column list into a sanitised `(a, b, c)` clause, or "" if none.
+fn cleanCols(csv: string): string {
+    let parts = string.split(csv, ",");
+    let out = "";
+    let n = 0;
+    let i = 0;
+    while (i < parts.size()) {
+        let c = ident(parts.get(i) ?? "");
+        if (!string.eql(c, "")) {
+            if (n > 0) { out = out + ", "; }
+            out = out + c;
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// A sanitised index method: keep only the letters (a-z/A-Z) so a value from the select
+// cannot inject anything, and drop the "default"/empty sentinel.
+fn indexMethod(raw: string): string {
+    let s = string.trim(raw);
+    if (string.eql(s, "") || string.eql(s, "default")) { return ""; }
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+        let ch = string.slice(s, i, i + 1);
+        let isAlpha = (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z");
+        if (isAlpha) { out = out + ch; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Build a `CREATE [UNIQUE] INDEX` statement for the active engine. The index method is
+// placed where each dialect wants it: Postgres/MySQL take a `USING <method>`, MSSQL takes
+// a CLUSTERED/NONCLUSTERED keyword before INDEX, and kaidb has no selectable method.
+// Returns "" when the name, table, or column list is empty.
+pub fn buildCreateIndex(dbtype: string, idxname: string, table: string, columns: string, unique: string, indextype: string): string {
+    let name = ident(idxname);
+    let t = ident(table);
+    let cols = cleanCols(columns);
+    if (string.eql(name, "") || string.eql(t, "") || string.eql(cols, "")) { return ""; }
+    let uniq = "";
+    if (string.eql(unique, "on") || string.eql(unique, "true") || string.eql(unique, "1")) { uniq = "UNIQUE "; }
+    let m = indexMethod(indextype);
+
+    if (string.eql(dbtype, "mssql")) {
+        // CREATE [UNIQUE] [CLUSTERED|NONCLUSTERED] INDEX name ON table (cols)
+        let clus = "";
+        if (!string.eql(m, "")) { clus = m + " "; }
+        return "CREATE " + uniq + clus + "INDEX " + name + " ON " + t + " (" + cols + ")";
+    }
+    if (string.eql(dbtype, "mysql")) {
+        // CREATE [UNIQUE] INDEX name [USING method] ON table (cols)
+        let using = "";
+        if (!string.eql(m, "")) { using = " USING " + m; }
+        return "CREATE " + uniq + "INDEX " + name + using + " ON " + t + " (" + cols + ")";
+    }
+    if (string.eql(dbtype, "postgres")) {
+        // CREATE [UNIQUE] INDEX name ON table [USING method] (cols)
+        let using = "";
+        if (!string.eql(m, "")) { using = " USING " + m; }
+        return "CREATE " + uniq + "INDEX " + name + " ON " + t + using + " (" + cols + ")";
+    }
+    // kaidb (default): no method clause.
+    return "CREATE " + uniq + "INDEX " + name + " ON " + t + " (" + cols + ")";
+}

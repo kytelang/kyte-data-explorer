@@ -1,0 +1,109 @@
+// The Create Table and Create Index dialogs, rendered as modal overlays into #modal-root
+// (same shell as the connect modal). Both are engine-aware: the field-type dropdown and
+// the index-type dropdown are populated from the ACTIVE engine's supported set (see
+// command.ky columnTypesFor / indexTypesFor).
+//
+// Create Table uses an editable field grid (name, type, Not Null, PK) with add/remove
+// rows, driven by studio.js. The grid does not post its own inputs; studio.js serialises
+// the rows into the hidden `columns` textarea ("name TYPE [NOT NULL]" per line) and the
+// hidden `pk` input, which are the fields the server binds. A hidden prototype row
+// (#ct-proto) carries the engine's type options for cloning new rows.
+import string;
+import list;
+import Features.Ddl.command;
+
+// One editable field row. The inputs carry NO name attribute (so htmx never posts them);
+// studio.js reads them by class and serialises into the hidden fields.
+fn fieldRow(types: list.List<string>): Html {
+    return <div class="col-row">
+        <input class="col-name" type="text" autocomplete="off" placeholder="column_name"/>
+        <select class="col-type">
+            {for (i in 0..types.size()) {
+                let ty = types.get(i) ?? "";
+                <option value={ty}>{ty}</option>;
+            }}
+        </select>
+        <label class="col-flag"><input class="col-null" type="checkbox"/></label>
+        <label class="col-flag"><input class="col-pk" type="checkbox"/></label>
+        <button class="col-del" type="button" title="Remove field"><i class="ic ic-x"></i></button>
+    </div>;
+}
+
+pub fn createTableModal(engine: string, errorMsg: string): Html {
+    let types = command.columnTypesFor(engine);
+    return <div class="modal-backdrop">
+        <div class="modal modal-wide">
+            <div class="modal-head">
+                <h2>Create table</h2>
+                <button class="x" type="button" data-close-modal="1"><i class="ic ic-x"></i></button>
+            </div>
+            <form class="modal-body" hx-post="/ddl/table" hx-target="#modal-root" hx-swap="innerHTML">
+                {errorBanner(errorMsg)}
+                <label>Table name<input name="table" value="" autocomplete="off" placeholder="e.g. widgets"/></label>
+                <div class="fieldgrid" id="ct-grid">
+                    <div class="fieldgrid-head">
+                        <span>Field</span><span>Type</span><span>Not Null</span><span>PK</span><span></span>
+                    </div>
+                    <div class="fieldgrid-rows" id="ct-rows">
+                        {fieldRow(types)}
+                    </div>
+                    <button class="btn-add-field" id="ct-add" type="button"><i class="ic ic-add"></i> Add field</button>
+                </div>
+                <textarea name="columns" id="ct-columns" class="sql-hidden"></textarea>
+                <input name="pk" id="ct-pk" type="hidden" value=""/>
+                <div class="modal-actions">
+                    <button class="ghost" type="button" data-close-modal="1">Cancel</button>
+                    <button class="primary" type="submit">Create table</button>
+                </div>
+            </form>
+        </div>
+    </div>;
+}
+
+pub fn createIndexModal(engine: string, errorMsg: string): Html {
+    let methods = command.indexTypesFor(engine);
+    return <div class="modal-backdrop">
+        <div class="modal">
+            <div class="modal-head">
+                <h2>Create index</h2>
+                <button class="x" type="button" data-close-modal="1"><i class="ic ic-x"></i></button>
+            </div>
+            <form class="modal-body" hx-post="/ddl/index" hx-target="#modal-root" hx-swap="innerHTML">
+                {errorBanner(errorMsg)}
+                <label>Index name<input name="idxname" value="" autocomplete="off" placeholder="e.g. widgets_name_idx"/></label>
+                <div class="form-grid">
+                    <label>Table<input id="ddl-index-table" name="table" value="" autocomplete="off" placeholder="e.g. widgets"/></label>
+                    <label>Columns (comma-separated)<input name="columns" value="" autocomplete="off" placeholder="e.g. name, price"/></label>
+                </div>
+                {indexTypeField(methods)}
+                <label class="check-inline"><input name="unique" type="checkbox"/> Unique</label>
+                <div class="modal-actions">
+                    <button class="ghost" type="button" data-close-modal="1">Cancel</button>
+                    <button class="primary" type="submit">Create index</button>
+                </div>
+            </form>
+        </div>
+    </div>;
+}
+
+// The index-method dropdown, shown only when the engine offers selectable methods (kaidb
+// does not, so it is omitted and the server receives an empty indextype).
+fn indexTypeField(methods: list.List<string>): Html {
+    if (methods.size() == 0) { return <span></span>; }
+    return <label>Index type
+        <select name="indextype">
+            {for (i in 0..methods.size()) {
+                let m = methods.get(i) ?? "";
+                <option value={m}>{m}</option>;
+            }}
+        </select>
+    </label>;
+}
+
+// The error banner inside a modal, shown only when a message is present.
+fn errorBanner(msg: string): Html {
+    if (string.eql(msg, "")) { return <span></span>; }
+    return <div class="result err">{msg}</div>;
+}
+
+import string;

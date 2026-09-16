@@ -1,3 +1,27 @@
+import string;
+
+// The `GET /use?id=N` query shape: which connection to make active.
+@serializable
+pub struct UseConnForm {
+    pub id: string,
+    init() { self.id = ""; }
+}
+
+// Parse a non-negative decimal integer, or return `fallback` for anything non-numeric.
+pub fn parseIntOr(s: string, fallback: int): int {
+    let t = string.trim(s);
+    if (t.length == 0) { return fallback; }
+    let n = 0;
+    let i = 0;
+    while (i < t.length) {
+        let code = t[i] & 255;
+        if (code < 48 || code > 57) { return fallback; }
+        n = n * 10 + (code - 48);
+        i = i + 1;
+    }
+    return n;
+}
+
 // The connect form's bound shape. `ctx.bind<ConnectForm>()` fills these from the POST
 // body by field name. Marked @serializable so the framework can bind it.
 @serializable

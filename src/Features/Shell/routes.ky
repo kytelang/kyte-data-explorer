@@ -4,7 +4,7 @@ import Shared.AppContext;
 import Features.Shell.handler;
 
 pub fn registerShell(ctx: AppContext): void {
-    ctx.app.get("/", ShellHandler(ctx.conn));
+    ctx.app.get("/", ShellHandler(ctx.store));
     ctx.app.get("/healthz", HealthzHandler());
-    ctx.app.get("/chrome", ChromeHandler(ctx.conn));
+    ctx.app.get("/chrome", ChromeHandler(ctx.store));
 }

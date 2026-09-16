@@ -16,6 +16,7 @@ import Features.Shell.routes;
 import Features.Connections.routes;
 import Features.Explorer.routes;
 import Features.Query.routes;
+import Features.Ddl.routes;
 
 fn buildApp(): App {
     let app = App();
@@ -25,11 +26,12 @@ fn buildApp(): App {
     // path to a handler INSTANCE that implements `RouteHandler`; handlers hold their
     // dependencies (here, the shared `AppContext`) as fields. As the studio grows, add a
     // feature module with its own `register(ctx)` and call it here.
-    let ctx = AppContext(app, ActiveConnection());
+    let ctx = AppContext(app, ConnStore());
     registerShell(ctx);
     registerConnections(ctx);
     registerExplorer(ctx);
     registerQuery(ctx);
+    registerDdl(ctx);
 
     // Serve static assets (wwwroot/) for any unmatched GET: /studio.css and, later, the
     // vendored htmx bundle and other front-end assets.

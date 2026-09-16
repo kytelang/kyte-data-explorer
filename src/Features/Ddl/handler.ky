@@ -1,0 +1,114 @@
+// The DDL handlers: serve the Create Table / Create Index modals and run the generated
+// DDL against the active SQL connection.
+//
+// GET  /ddl/table  -> render the Create Table modal into #modal-root.
+// POST /ddl/table  -> build + run CREATE TABLE; on success clear the modal and fire
+//                     `connected` so the explorer refreshes; on failure re-render the
+//                     modal with the DB (or validation) error.
+// GET/POST /ddl/index -> the same for CREATE INDEX.
+//
+// DDL is a SQL-engine concern: Mongo (a document store) has no CREATE TABLE, so the
+// handlers refuse it with a clear message rather than emitting invalid SQL.
+import web.routing;
+import web.response;
+import web.status;
+import string;
+import Features.Ddl.command;
+import Features.Ddl.views.ddl_forms;
+import Shared.Db;
+import Shared.Session;
+
+// The script that closes the modal and refreshes the explorer (same mechanism the
+// connect flow uses: an HX-Trigger header would fire on the now-removed form, so we
+// dispatch `connected` on <body> from a small inline script instead).
+fn closeAndRefresh(): string {
+    // Defer clearing #modal-root to the next tick: this fragment is itself swapped INTO
+    // #modal-root, and clearing it synchronously mid-swap makes htmx's post-swap cleanup
+    // throw a removeChild NotFoundError. setTimeout(...,0) lets htmx settle first.
+    return "<script>(function(){setTimeout(function(){var m=document.getElementById('modal-root');if(m){m.innerHTML='';}if(window.htmx){htmx.trigger(document.body,'connected');}},0);})();</script>";
+}
+
+// The active engine for rendering the modal's type/method dropdowns; falls back to
+// kaidb when nothing is connected (the modal is disabled in that case anyway).
+fn engineFor(c: Conn | undefined): string {
+    if (c == undefined) { return "kaidb"; }
+    return c.dbtype;
+}
+
+pub struct GetCreateTableHandler impl RouteHandler {
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
+    async fn serve(self: GetCreateTableHandler, ctx: Context): Response {
+        return response.Response(Status.Ok, createTableModal(engineFor(self.store.active()), ""))
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}
+
+pub struct CreateTableHandler impl RouteHandler {
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
+    async fn serve(self: CreateTableHandler, ctx: Context): Response {
+        let c = self.store.active();
+        if (c == undefined) {
+            return response.Response(Status.Ok, createTableModal("kaidb", "Not connected. Connect a SQL database first."))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        let eng = c.dbtype;
+        if (string.eql(eng, "mongodb")) {
+            return response.Response(Status.Ok, createTableModal(eng, "DDL is not available for MongoDB (a document store)."))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        let f = ctx.bind<CreateTableForm>();
+        let sql = buildCreateTable(f.table, f.columns, f.pk);
+        if (string.eql(sql, "")) {
+            return response.Response(Status.Ok, createTableModal(eng, "Enter a table name and at least one field."))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        let r = await runQuery(c.dbtype, c.dsn, sql);
+        if (!r.ok) {
+            return response.Response(Status.Ok, createTableModal(eng, r.error))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        return response.Response(Status.Ok, response.raw(closeAndRefresh()))
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}
+
+pub struct GetCreateIndexHandler impl RouteHandler {
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
+    async fn serve(self: GetCreateIndexHandler, ctx: Context): Response {
+        return response.Response(Status.Ok, createIndexModal(engineFor(self.store.active()), ""))
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}
+
+pub struct CreateIndexHandler impl RouteHandler {
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
+    async fn serve(self: CreateIndexHandler, ctx: Context): Response {
+        let c = self.store.active();
+        if (c == undefined) {
+            return response.Response(Status.Ok, createIndexModal("kaidb", "Not connected. Connect a SQL database first."))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        let eng = c.dbtype;
+        if (string.eql(eng, "mongodb")) {
+            return response.Response(Status.Ok, createIndexModal(eng, "DDL is not available for MongoDB (a document store)."))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        let f = ctx.bind<CreateIndexForm>();
+        let sql = buildCreateIndex(c.dbtype, f.idxname, f.table, f.columns, f.unique, f.indextype);
+        if (string.eql(sql, "")) {
+            return response.Response(Status.Ok, createIndexModal(eng, "Enter an index name, a table, and at least one column."))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        let r = await runQuery(c.dbtype, c.dsn, sql);
+        if (!r.ok) {
+            return response.Response(Status.Ok, createIndexModal(eng, r.error))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        return response.Response(Status.Ok, response.raw(closeAndRefresh()))
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}

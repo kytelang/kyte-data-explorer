@@ -4,5 +4,5 @@ import Shared.AppContext;
 import Features.Query.handler;
 
 pub fn registerQuery(ctx: AppContext): void {
-    ctx.app.post("/query", RunQueryHandler(ctx.conn));
+    ctx.app.post("/query", RunQueryHandler(ctx.store));
 }

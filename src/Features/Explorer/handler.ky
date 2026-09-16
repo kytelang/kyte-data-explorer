@@ -1,12 +1,9 @@
-// The Explorer feature handlers. Both read the shared active connection.
+// The Explorer feature handlers, over the shared ConnStore.
 //
-// GET /explorer          -> the object tree: the connected database's user tables,
-//                           each an htmx-expandable node.
-// GET /explorer/table    -> one table's columns and indexes, loaded into the node
-//                           when the user expands it.
-//
-// Neither handler holds a live pool: they call the introspection helpers in
-// Shared/Db.ky, which open a short-lived pool from the stored connection parameters.
+// GET /explorer        -> all connection roots; the active one expanded to its user
+//                         tables (SQL) or collections (Mongo), each an htmx-expandable node.
+// GET /explorer/table  -> one table's columns and indexes (active connection), loaded
+//                         when the node is expanded.
 import web.routing;
 import web.response;
 import web.status;
@@ -18,43 +15,43 @@ import Features.Explorer.command;
 import Features.Explorer.views.explorer_tree;
 import Features.Explorer.views.table_detail;
 
-// GET /explorer: render the tree. When nothing is connected yet, render the empty
-// state so the panel is self-consistent whether loaded on the connected event or by
-// hand.
 pub struct ExplorerHandler impl RouteHandler {
-    conn: ActiveConnection,
-    init(conn: ActiveConnection) { self.conn = conn; }
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
 
     async fn serve(self: ExplorerHandler, ctx: Context): Response {
-        let c = self.conn;
-        if (!c.connected) {
-            return response.Response(Status.Ok, explorerTree(false, "", "", "", list.List<string>()))
+        let s = self.store;
+        let empty = list.List<string>();
+        let c = s.active();
+        if (c == undefined) {
+            return response.Response(Status.Ok, explorerRoots(s, empty, empty))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
         if (string.eql(c.dbtype, "mongodb")) {
             let colls = await mongoListCollections(c.dsn, c.dbname);
-            return response.Response(Status.Ok, explorerTreeMongo(c.host, c.port, c.dbname, colls))
+            return response.Response(Status.Ok, explorerRoots(s, empty, colls))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
         let tables = await listTables(c.dbtype, c.dsn);
-        return response.Response(Status.Ok, explorerTree(true, c.host, c.port, c.dbname, tables))
+        return response.Response(Status.Ok, explorerRoots(s, tables, empty))
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
 }
 
-// GET /explorer/table?name=X: render the columns and indexes of one table.
+// GET /explorer/table?name=X: columns + indexes of one table on the active connection.
 pub struct TableDetailHandler impl RouteHandler {
-    conn: ActiveConnection,
-    init(conn: ActiveConnection) { self.conn = conn; }
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
 
     async fn serve(self: TableDetailHandler, ctx: Context): Response {
         let q = ctx.bind<TableQuery>();
-        if (!self.conn.connected) {
+        let c = self.store.active();
+        if (c == undefined) {
             return response.Response(Status.Ok, response.raw("<div class=\"muted\">Not connected.</div>"))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
-        let cols = await listColumns(self.conn.dbtype, self.conn.dsn, q.name);
-        let idxs = await listIndexes(self.conn.dbtype, self.conn.dsn, q.name);
+        let cols = await listColumns(c.dbtype, c.dsn, q.name);
+        let idxs = await listIndexes(c.dbtype, c.dsn, q.name);
         return response.Response(Status.Ok, tableDetail(q.name, cols, idxs))
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
