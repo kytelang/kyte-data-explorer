@@ -1,0 +1,8 @@
+// The bound shape for the table-detail request. `ctx.bind<TableQuery>()` fills
+// `name` from the `?name=` query string. Marked @serializable so the framework can
+// bind it.
+@serializable
+pub struct TableQuery {
+    pub name: string,
+    init() { self.name = ""; }
+}

@@ -1,0 +1,10 @@
+// The Explorer feature route table: the object tree (GET /explorer) and one table's
+// columns + indexes (GET /explorer/table?name=...). Both handlers read the shared
+// active connection from the context. Registered once from the composition root.
+import Shared.AppContext;
+import Features.Explorer.handler;
+
+pub fn registerExplorer(ctx: AppContext): void {
+    ctx.app.get("/explorer", ExplorerHandler(ctx.conn));
+    ctx.app.get("/explorer/table", TableDetailHandler(ctx.conn));
+}

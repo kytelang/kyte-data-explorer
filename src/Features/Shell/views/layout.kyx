@@ -22,7 +22,10 @@ pub fn page(): Html {
                 {titleBar()}
                 <div class="studio-main">
                     {activityBar()}
-                    <aside class="explorer" id="explorer">
+                    <aside class="explorer" id="explorer"
+                           hx-get="/explorer"
+                           hx-trigger="connected from:body"
+                           hx-swap="innerHTML">
                         <div class="panel-title">Explorer</div>
                         <p class="muted">No connection yet. Connecting to a database will list its schemas, tables and indexes here.</p>
                     </aside>

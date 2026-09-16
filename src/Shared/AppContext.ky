@@ -1,0 +1,25 @@
+// AppContext: the composition context, built once at startup and handed to every
+// feature's `register(ctx)`. It bundles the `App` being configured with the studio's
+// app-wide shared state, which today is just the active database connection. A
+// feature reads the router as `ctx.app` and the current connection as `ctx.conn`, so
+// register signatures stay uniform as the studio grows.
+//
+// It is a concrete class (one shared instance, passed by reference) so that the
+// connect handler's mutation of `ctx.conn` is visible to the explorer and query
+// handlers that read it. Distinct from `web.routing.Context`, which is the
+// per-request handler context.
+import web.app;
+import Shared.Session;
+
+pub class AppContext {
+    /// The web application being configured; features register routes on it.
+    pub app: App,
+    /// The one active database connection, shared across features and mutated by
+    /// the connect handler on a successful connect.
+    pub conn: ActiveConnection,
+
+    init(app: App, conn: ActiveConnection) {
+        self.app = app;
+        self.conn = conn;
+    }
+}

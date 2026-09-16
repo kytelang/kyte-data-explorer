@@ -1,29 +1,52 @@
-// The database capability layer. It maps a studio connection form to the right Kyte
-// driver, builds a connection string, and opens a short-lived pool to PROBE the target
-// so a bad host or credentials surface at connect time rather than on first use.
+// The database capability layer: it maps a studio connection to the right Kyte
+// driver, builds connection strings, PROBES a target at connect time, and reads
+// the schema catalog (tables, columns, indexes) for the explorer.
 //
-// Only kaidb is wired in this session (S2); postgres/mysql/mssql/mongo slot in as extra
-// `dbtype` cases in `driverFor`/`dsnFor` in later sessions (S6/S7). Persisting the current
-// connection (so the explorer and query panels reuse it) is S3's job; here we just probe
-// and report, holding no state.
+// Every call opens a short-lived one-connection pool from the stored connection
+// parameters, runs its queries, and tears the pool down. Holding a live,
+// driver-varying pool in a long-lived object is the shape we are deliberately
+// avoiding for now (see Shared/Session.ky); for a desktop explorer that issues a
+// handful of catalog queries per click, the open/close cost is negligible.
+//
+// Introspection is per-driver: kaidb reads its `sys.*` system catalog, Postgres
+// reads `information_schema` / `pg_indexes`. Both go through the same shared
+// `data.db` result model, so the explorer code above this layer is driver-neutral.
+// mysql, mssql and mongo slot in as extra `dbtype` cases in later sessions.
 import novadb;
+import postgres;
 import data.db;
 import data.sql.pool;
 import list;
 import string;
-import metrics;
 
-// The outcome of a connect attempt: whether the target answered, and a human message
-// (table count on success, or the driver's error on failure) for the UI to show.
+// The outcome of a connect attempt: whether the target answered, and a human
+// message for the UI to show.
 pub struct ProbeResult {
     pub ok: bool,
     pub message: string,
     init(ok: bool, message: string) { self.ok = ok; self.message = message; }
 }
 
+// One column of a table, as the explorer shows it.
+pub struct ColumnInfo {
+    pub name: string,
+    pub dataType: string,
+    pub nullable: bool,
+    pub primaryKey: bool,
+    init(name: string, dataType: string, nullable: bool, primaryKey: bool) {
+        self.name = name; self.dataType = dataType; self.nullable = nullable; self.primaryKey = primaryKey;
+    }
+}
+
+// One index of a table.
+pub struct IndexInfo {
+    pub name: string,
+    init(name: string) { self.name = name; }
+}
+
 // Builds a kaidb connection string of the form `user:pass@host:port?db=NAME&tls=false`.
 // The userinfo prefix is omitted when no user is given (kaidb with auth disabled).
-fn kaidbDsn(host: string, port: string, user: string, password: string, dbname: string): string {
+pub fn kaidbDsn(host: string, port: string, user: string, password: string, dbname: string): string {
     let auth = "";
     if (!string.eql(user, "")) { auth = user + ":" + password + "@"; }
     let db = dbname;
@@ -31,20 +54,27 @@ fn kaidbDsn(host: string, port: string, user: string, password: string, dbname: 
     return auth + host + ":" + port + "?db=" + db + "&tls=false";
 }
 
-// Opens a one-connection pool to the target, runs a trivial catalog query to confirm the
-// server answered, then tears the pool down. Returns ok + a message. Errors are reported
-// through `ResultSet.ok()`/`.err` rather than thrown, matching the driver's result model.
+// Opens the right driver pool for a stored connection. Only the drivers wired so
+// far are handled; an unknown dbtype falls back to kaidb so the caller still gets
+// a usable pool rather than a crash (the connect probe would already have failed
+// for a truly unsupported target).
+fn poolFor(dbtype: string, dsn: string): pool.Pool {
+    if (string.eql(dbtype, "postgres")) {
+        return pool.Pool(postgres.PgDriver(), dsn, 1);
+    }
+    return pool.Pool(novadb.KyteDriver(), dsn, 1);
+}
+
+// Probes a kaidb target: opens a pool, runs a trivial liveness query, tears down.
+// We treat the server as reachable if the query round-trips at all (a SQL error
+// still proves the server answered); only a connection-class SQLSTATE ("08...")
+// counts as not connected. The real schema read happens later, once the
+// connection is recorded as active.
 pub async fn probeKaidb(host: string, port: string, user: string, password: string, dbname: string): ProbeResult {
     let dsn = kaidbDsn(host, port, user, password, dbname);
     let p = pool.Pool(novadb.KyteDriver(), dsn, 1);
     let conn = await p.acquire();
-    // Liveness probe. We only care whether the server is reachable and speaking the
-    // protocol, so a query that round-trips is enough. We do NOT require the query to
-    // succeed: a SQL error (e.g. the parser rejecting this trivial probe) still proves
-    // the server answered. Only a connection-class failure (SQLSTATE "08...", which the
-    // kaidb driver returns as 08006 "connection ... lost") counts as not connected.
-    // The real schema introspection happens in S3 once a connection is persisted.
-    let rs = await conn.query("SELECT 1", list.List<DbValue>());
+    let rs = await conn.query("SELECT 1", list.List<db.DbValue>());
     p.release(conn);
     p.closeAll();
     if (rs.ok()) {
@@ -53,6 +83,92 @@ pub async fn probeKaidb(host: string, port: string, user: string, password: stri
     if (string.startsWith(rs.err.code, "08")) {
         return ProbeResult(false, rs.err.message);
     }
-    // Server responded (rejected the probe SQL) -> it is reachable.
     return ProbeResult(true, "Connected to kaidb at " + host + ":" + port + ".");
+}
+
+// Lists the user tables of the active connection, sorted by the query. System
+// catalog tables (kaidb `sys.*`, Postgres system schemas) are filtered out so the
+// explorer shows only the user's own tables.
+pub async fn listTables(dbtype: string, dsn: string): list.List<string> {
+    let out = list.List<string>();
+    let p = poolFor(dbtype, dsn);
+    let conn = await p.acquire();
+    let sql = "SELECT name FROM sys.tables";
+    if (string.eql(dbtype, "postgres")) {
+        sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name";
+    }
+    let rs = await conn.query(sql, list.List<db.DbValue>());
+    if (rs.ok()) {
+        let i = 0;
+        while (i < rs.rows.size()) {
+            let name = rs.rows.at(i).getText(0);
+            if (!string.startsWith(name, "sys.")) { out.push(name); }
+            i = i + 1;
+        }
+    }
+    p.release(conn);
+    p.closeAll();
+    return out;
+}
+
+// Lists the columns of one table, in ordinal order, with type and nullability.
+// Postgres primary-key detection needs a catalog join we defer, so `primaryKey`
+// is reported only for kaidb for now.
+pub async fn listColumns(dbtype: string, dsn: string, table: string): list.List<ColumnInfo> {
+    let out = list.List<ColumnInfo>();
+    let p = poolFor(dbtype, dsn);
+    let conn = await p.acquire();
+    let params = list.List<db.DbValue>();
+    params.push(db.dbText(table));
+    let sql = "SELECT name, data_type, is_nullable, is_primary_key FROM sys.columns WHERE table_name = $1 ORDER BY ordinal";
+    let pg = string.eql(dbtype, "postgres");
+    if (pg) {
+        sql = "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position";
+    }
+    let rs = await conn.query(sql, params);
+    if (rs.ok()) {
+        let i = 0;
+        while (i < rs.rows.size()) {
+            let row = rs.rows.at(i);
+            let name = row.getText(0);
+            let dtype = row.getText(1);
+            let nullable = false;
+            let pk = false;
+            if (pg) {
+                nullable = string.eql(row.getText(2), "YES");
+            } else {
+                nullable = !string.eql(row.getText(2), "0");
+                pk = !string.eql(row.getText(3), "0");
+            }
+            out.push(ColumnInfo(name, dtype, nullable, pk));
+            i = i + 1;
+        }
+    }
+    p.release(conn);
+    p.closeAll();
+    return out;
+}
+
+// Lists the indexes defined on one table.
+pub async fn listIndexes(dbtype: string, dsn: string, table: string): list.List<IndexInfo> {
+    let out = list.List<IndexInfo>();
+    let p = poolFor(dbtype, dsn);
+    let conn = await p.acquire();
+    let params = list.List<db.DbValue>();
+    params.push(db.dbText(table));
+    let sql = "SELECT name FROM sys.indexes WHERE table_name = $1";
+    if (string.eql(dbtype, "postgres")) {
+        sql = "SELECT indexname FROM pg_indexes WHERE tablename = $1 ORDER BY indexname";
+    }
+    let rs = await conn.query(sql, params);
+    if (rs.ok()) {
+        let i = 0;
+        while (i < rs.rows.size()) {
+            out.push(IndexInfo(rs.rows.at(i).getText(0)));
+            i = i + 1;
+        }
+    }
+    p.release(conn);
+    p.closeAll();
+    return out;
 }

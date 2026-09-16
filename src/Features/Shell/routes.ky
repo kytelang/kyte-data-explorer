@@ -1,10 +1,10 @@
 // The Shell feature's route table: the studio page and the liveness probe. Registered
 // once from the composition root (main.ky). As features land, each gets its own
 // `register(app, deps...)` and main calls them in turn.
-import web.app;
+import Shared.AppContext;
 import Features.Shell.handler;
 
-pub fn registerShell(app: App): void {
-    app.get("/", ShellHandler());
-    app.get("/healthz", HealthzHandler());
+pub fn registerShell(ctx: AppContext): void {
+    ctx.app.get("/", ShellHandler());
+    ctx.app.get("/healthz", HealthzHandler());
 }

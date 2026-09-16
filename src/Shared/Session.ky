@@ -1,0 +1,57 @@
+// The active connection: the studio's one piece of app-lifetime mutable state.
+//
+// The studio is a single-user desktop app (one webview, one server process), so a
+// single shared "current connection" is the right model, not a per-request session
+// cookie. When the user connects on the Connections screen we record the target here;
+// the explorer and (later) the query panel read it to know what to introspect and
+// query against. Kyte web is single-reactor, so this shared mutable object is touched
+// by one handler at a time and needs no lock.
+//
+// We deliberately store only the connection PARAMETERS, not a live pool. Each
+// introspection or query request opens a short-lived pool from these parameters, runs
+// its work, and tears it down (see Shared/Db.ky). That keeps a live, driver-varying
+// pool out of a long-lived object field, which is the safe, proven shape; a pooled
+// fast path can come later once the studio's query volume justifies it.
+import string;
+
+pub class ActiveConnection {
+    /// True once a connect probe has succeeded and the fields below are populated.
+    pub connected: bool,
+    /// The driver key: "kaidb", "postgres", "mysql", "mssql" or "mongodb".
+    pub dbtype: string,
+    /// The driver-specific connection string, ready to hand to the pool.
+    pub dsn: string,
+    /// Display fields, kept for the status bar and the explorer header. These never
+    /// carry the password, which lives only inside `dsn`.
+    pub host: string,
+    pub port: string,
+    pub dbname: string,
+
+    init() {
+        self.connected = false;
+        self.dbtype = "";
+        self.dsn = "";
+        self.host = "";
+        self.port = "";
+        self.dbname = "";
+    }
+
+    /// Records a successful connection. Called by the connect handler once its probe
+    /// comes back reachable, so subsequent explorer requests know the target.
+    pub fn set(self: ActiveConnection, dbtype: string, dsn: string, host: string, port: string, dbname: string): void {
+        self.connected = true;
+        self.dbtype = dbtype;
+        self.dsn = dsn;
+        self.host = host;
+        self.port = port;
+        self.dbname = dbname;
+    }
+
+    /// A short "kaidb 127.0.0.1:3009/default" style label for the title and status bars.
+    pub fn label(self: ActiveConnection): string {
+        if (!self.connected) { return "Not connected"; }
+        let db = self.dbname;
+        if (string.eql(db, "")) { db = "default"; }
+        return self.dbtype + " " + self.host + ":" + self.port + "/" + db;
+    }
+}

@@ -1,0 +1,40 @@
+// One table's detail, loaded under its node in the explorer tree: a column grid
+// (name, type, nullability, primary-key flag) and the list of indexes.
+import list;
+import Shared.Db;
+
+// Small text helpers: KYX interpolation takes a value, so the yes/no and PK marks
+// are computed here (a plain function body allows an if-else expression) and then
+// interpolated into the cells.
+fn yesNo(b: bool): string { return if (b) "yes" else "no"; }
+fn pkMark(b: bool): string { return if (b) "PK" else ""; }
+
+pub fn tableDetail(table: string, cols: list.List<Db.ColumnInfo>, idxs: list.List<Db.IndexInfo>): Html {
+    return <div class="detail-box">
+        <div class="detail-h">Columns</div>
+        <table class="cols">
+            <thead><tr><th>Name</th><th>Type</th><th>Null</th><th>PK</th></tr></thead>
+            <tbody>
+                {for (i in 0..cols.size()) {
+                    let c = cols.get(i) ?? Db.ColumnInfo("", "", false, false);
+                    <tr>
+                        <td>{c.name}</td>
+                        <td class="muted">{c.dataType}</td>
+                        <td>{yesNo(c.nullable)}</td>
+                        <td>{pkMark(c.primaryKey)}</td>
+                    </tr>;
+                }}
+            </tbody>
+        </table>
+        <div class="detail-h">Indexes</div>
+        {if (idxs.size() == 0) { <div class="muted">No indexes.</div>; }}
+        {if (idxs.size() > 0) {
+            <ul class="idx-list">
+                {for (i in 0..idxs.size()) {
+                    let ix = idxs.get(i) ?? Db.IndexInfo("");
+                    <li>{ix.name}</li>;
+                }}
+            </ul>;
+        }}
+    </div>;
+}

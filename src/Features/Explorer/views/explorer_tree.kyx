@@ -1,0 +1,30 @@
+// The explorer sidebar's inner content: the connection label and the list of user
+// tables. Each table is a button that, when clicked, htmx-loads its columns and
+// indexes from /explorer/table into the detail div beneath it. This whole fragment
+// replaces the #explorer panel's inner HTML, so it carries its own panel title.
+import list;
+
+pub fn explorerTree(tables: list.List<string>, connected: bool, label: string): Html {
+    if (!connected) {
+        return <div>
+            <div class="panel-title">Explorer</div>
+            <p class="muted">No connection yet. Connect a database to list its tables, columns and indexes here.</p>
+        </div>;
+    }
+    return <div>
+        <div class="panel-title">Explorer</div>
+        <div class="conn-label">{label}</div>
+        <ul class="tree">
+            {for (i in 0..tables.size()) {
+                let t = tables.get(i) ?? "";
+                <li class="tree-item">
+                    <button class="tree-toggle"
+                            hx-get={"/explorer/table?name=" + t}
+                            hx-target={"#tbl-" + t}
+                            hx-swap="innerHTML">{t}</button>
+                    <div class="tree-detail" id={"tbl-" + t}></div>
+                </li>;
+            }}
+        </ul>
+    </div>;
+}

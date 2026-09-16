@@ -10,16 +10,24 @@ import list;
 import string;
 import data.migrate;
 import migrations;
+import Shared.Session;
+import Shared.AppContext;
 import Features.Shell.routes;
 import Features.Connections.routes;
+import Features.Explorer.routes;
 
 fn buildApp(): App {
     let app = App();
 
-    // Register each feature's routes. As the studio grows, add a feature module with its
-    // own `register(app, deps...)` and call it here (connections, explorer, query, ...).
-    registerShell(app);
-    registerConnections(app);
+    // Composition root: build the shared context once (the app plus the single active
+    // connection), then let each feature register its routes against it. A route maps a
+    // path to a handler INSTANCE that implements `RouteHandler`; handlers hold their
+    // dependencies (here, the shared `AppContext`) as fields. As the studio grows, add a
+    // feature module with its own `register(ctx)` and call it here.
+    let ctx = AppContext(app, ActiveConnection());
+    registerShell(ctx);
+    registerConnections(ctx);
+    registerExplorer(ctx);
 
     // Serve static assets (wwwroot/) for any unmatched GET: /studio.css and, later, the
     // vendored htmx bundle and other front-end assets.

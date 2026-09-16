@@ -10,6 +10,7 @@ import Features.Connections.command;
 import Features.Connections.views.connect_form;
 import Features.Connections.views.connect_result;
 import Shared.Db;
+import Shared.Session;
 
 // GET /connect: return the connect form fragment (htmx swaps it into the content area).
 pub struct GetConnectFormHandler impl RouteHandler {
@@ -21,9 +22,15 @@ pub struct GetConnectFormHandler impl RouteHandler {
     }
 }
 
-// POST /connect: bind the form, probe the target, and return the result fragment.
+// POST /connect: bind the form, probe the target, and on success record it as the
+// active connection so the explorer can read the schema. It holds the shared
+// `ActiveConnection` (from the composition root) and mutates it here. On success we
+// also emit an `HX-Trigger: connected` response header; the explorer panel listens
+// for that event and reloads its tree, so connecting fills the sidebar without a
+// full page reload.
 pub struct ConnectHandler impl RouteHandler {
-    init() {}
+    conn: ActiveConnection,
+    init(conn: ActiveConnection) { self.conn = conn; }
 
     async fn serve(self: ConnectHandler, ctx: Context): Response {
         let f = ctx.bind<ConnectForm>();
@@ -32,6 +39,13 @@ pub struct ConnectHandler impl RouteHandler {
             return response.Response(Status.Ok, frag).setHeader("Content-Type", "text/html; charset=utf-8");
         }
         let r = await probeKaidb(f.host, f.port, f.user, f.password, f.dbname);
+        if (r.ok) {
+            let dsn = kaidbDsn(f.host, f.port, f.user, f.password, f.dbname);
+            self.conn.set("kaidb", dsn, f.host, f.port, f.dbname);
+            return response.Response(Status.Ok, connectResult(r.ok, r.message))
+                .setHeader("Content-Type", "text/html; charset=utf-8")
+                .setHeader("HX-Trigger", "connected");
+        }
         return response.Response(Status.Ok, connectResult(r.ok, r.message))
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
