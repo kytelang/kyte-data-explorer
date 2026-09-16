@@ -64,10 +64,79 @@ document.addEventListener("DOMContentLoaded", function () {
   if (document.getElementById("editor")) initSqlEditor();
 });
 
-// Delegated clicks: results tabs, and closing the connection modal.
+// Results-grid pagination. The whole (capped) result is in the DOM; we just show one
+// page-worth of <tr> at a time so a large result stays responsive. State lives on
+// window.__pg, reset on each results swap.
+function renderResultsPage() {
+  var s = window.__pg;
+  if (!s) return;
+  var start = s.page * s.size;
+  var end = Math.min(start + s.size, s.rows.length);
+  for (var i = 0; i < s.rows.length; i++) {
+    s.rows[i].style.display = (i >= start && i < end) ? "" : "none";
+  }
+  if (s.info) {
+    s.info.textContent = s.rows.length === 0
+      ? "0 rows"
+      : "Rows " + (start + 1) + "–" + end + " of " + s.rows.length;
+  }
+}
+
+function studioInitResults(root) {
+  var wrap = root.querySelector(".tabwrap");
+  if (wrap) {
+    var ms = wrap.getAttribute("data-ms");
+    var sm = document.getElementById("status-ms");
+    if (sm && ms) sm.textContent = ms;
+  }
+  var tbody = root.querySelector("table.grid tbody");
+  if (!tbody) { window.__pg = null; return; }
+  var size = parseInt((wrap && wrap.getAttribute("data-pagesize")) || "100", 10);
+  window.__pg = {
+    rows: Array.prototype.slice.call(tbody.querySelectorAll("tr")),
+    size: size,
+    page: 0,
+    info: root.querySelector(".pg-info"),
+  };
+  renderResultsPage();
+}
+
+// Copy the FULL result grid (all rows, not just the visible page) as TSV.
+function studioCopyResults() {
+  var root = document.getElementById("results-body");
+  var table = root && root.querySelector("table.grid");
+  if (!table) return;
+  var lines = [];
+  var head = Array.prototype.map.call(table.querySelectorAll("thead th"), function (th) { return th.textContent; });
+  lines.push(head.join("\t"));
+  Array.prototype.forEach.call(table.querySelectorAll("tbody tr"), function (tr) {
+    var cells = Array.prototype.map.call(tr.querySelectorAll("td"), function (td) {
+      return td.classList.contains("nullcell") ? "" : td.textContent;
+    });
+    lines.push(cells.join("\t"));
+  });
+  var text = lines.join("\n");
+  if (navigator.clipboard) { navigator.clipboard.writeText(text); }
+}
+
+// Delegated clicks: results tabs, pager, copy, and closing the connection modal.
 document.addEventListener("click", function (e) {
   var tab = e.target.closest ? e.target.closest(".results-tab") : null;
   if (tab) { studioResultsTab(tab.getAttribute("data-tab")); return; }
+
+  var pg = e.target.closest ? e.target.closest("[data-page]") : null;
+  if (pg) {
+    var s = window.__pg;
+    if (s) {
+      var maxPage = Math.max(0, Math.ceil(s.rows.length / s.size) - 1);
+      if (pg.getAttribute("data-page") === "next" && s.page < maxPage) s.page++;
+      if (pg.getAttribute("data-page") === "prev" && s.page > 0) s.page--;
+      renderResultsPage();
+    }
+    return;
+  }
+  if (e.target.closest && e.target.closest("[data-copy]")) { studioCopyResults(); return; }
+
   // Close the modal on the × / Cancel buttons (they carry data-close-modal) or a click
   // on the backdrop ITSELF. We must not use closest() against the backdrop, since it is
   // the ancestor of the whole dialog and would swallow the Connect click.
@@ -79,11 +148,13 @@ document.addEventListener("click", function (e) {
   }
 });
 
-// After a query runs, jump to Messages on error, Results otherwise.
+// After a query runs, jump to Messages on error / Results otherwise, then set up
+// pagination and the status-bar timing.
 document.addEventListener("htmx:afterSwap", function (e) {
   if (e.target && e.target.id === "results-body") {
     var wrap = e.target.querySelector(".tabwrap");
     var isErr = wrap && wrap.getAttribute("data-error") === "1";
     studioResultsTab(isErr ? "messages" : "results");
+    studioInitResults(e.target);
   }
 });

@@ -194,7 +194,16 @@ details > summary::-webkit-details-marker { display: none; }
 .export button { background: 0; border: 0; color: inherit; cursor: pointer; font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 4px; }
 .export button:hover { color: #fff; }
 
-.results-body { flex: 1 1 auto; overflow: auto; min-height: 0; }
+.results-body { flex: 1 1 auto; overflow: hidden; min-height: 0; }
+/* Results grid + pager: the grid scrolls, the pager is pinned at the bottom. */
+.grid-scroll { display: flex; flex-direction: column; height: 100%; }
+.grid-scroll > .grid-wrap { flex: 1 1 auto; overflow: auto; min-height: 0; border: 0; border-radius: 0; }
+.pager { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 4px 12px; border-top: 1px solid #252526; background: #2d2d2d; font-size: 12px; }
+.pager .pg-btn, .pager .pg-copy { background: #3c3c3c; color: #cccccc; border: 0; border-radius: 3px; padding: 2px 10px; cursor: pointer; font-size: 12px; }
+.pager .pg-btn:hover, .pager .pg-copy:hover { background: #4a4a4a; color: #fff; }
+.pager .pg-info { color: #888888; }
+.pager .pg-spacer { flex: 1 1 auto; }
+td.nullcell { color: #6b7280; font-style: italic; }
 .results-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #888888; font-size: 12px; padding: 40px; }
 .messages { padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #cccccc; }
 .messages .ok { color: #4ade80; font-weight: 600; }

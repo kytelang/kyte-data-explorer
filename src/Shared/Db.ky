@@ -18,6 +18,7 @@ import data.db;
 import data.sql.pool;
 import list;
 import string;
+import datetime;
 
 // The outcome of a connect attempt: whether the target answered, and a human
 // message for the UI to show.
@@ -44,28 +45,39 @@ pub struct IndexInfo {
     init(name: string) { self.name = name; }
 }
 
-// The row cap for an ad-hoc query result. S4 just runs a query and shows a grid;
-// pagination and a configurable cap are S5. We materialise at most this many rows so
-// a careless `SELECT *` on a large table cannot exhaust memory or the page.
-pub const QUERY_ROW_CAP: int = 500;
+// The row cap for an ad-hoc query result. We materialise at most this many rows so a
+// careless `SELECT *` on a large table cannot exhaust memory or the page; the results
+// pane paginates within the cap and shows a "first N of M" guard when it bites.
+pub const QUERY_ROW_CAP: int = 1000;
+
+// One result cell. `isNull` distinguishes a SQL NULL from an empty string, so the grid
+// can render NULL as a muted marker rather than a blank that looks like "".
+pub struct CellVal {
+    pub text: string,
+    pub isNull: bool,
+    init(text: string, isNull: bool) { self.text = text; self.isNull = isNull; }
+}
 
 // A materialised query result for the query panel: the column headers and the row
-// cells as plain strings (built before the pool closes, so nothing borrows freed
-// driver buffers), plus a row count, a truncation flag, and any error text. On a
-// failed query `ok` is false and `error` carries the driver's message.
+// cells (built before the pool closes, so nothing borrows freed driver buffers), the
+// total row count reported by the driver, a truncation flag, the server-side execution
+// time in milliseconds, and any error text. On a failed query `ok` is false and `error`
+// carries the driver's message.
 pub struct QueryResult {
     pub ok: bool,
     pub columns: list.List<string>,
-    pub rows: list.List<list.List<string>>,
+    pub rows: list.List<list.List<CellVal>>,
     pub rowCount: int,
     pub truncated: bool,
+    pub elapsedMs: long,
     pub error: string,
     init() {
         self.ok = false;
         self.columns = list.List<string>();
-        self.rows = list.List<list.List<string>>();
+        self.rows = list.List<list.List<CellVal>>();
         self.rowCount = 0;
         self.truncated = false;
+        self.elapsedMs = 0;
         self.error = "";
     }
 }
@@ -208,7 +220,10 @@ pub async fn runQuery(dbtype: string, dsn: string, sql: string): QueryResult {
     let r = QueryResult();
     let p = poolFor(dbtype, dsn);
     let conn = await p.acquire();
+    let t0 = datetime.nowNs();
     let rs = await conn.query(sql, list.List<db.DbValue>());
+    let t1 = datetime.nowNs();
+    r.elapsedMs = (t1 - t0) / 1000000;
     if (!rs.ok()) {
         r.error = rs.err.message;
         p.release(conn);
@@ -229,10 +244,10 @@ pub async fn runQuery(dbtype: string, dsn: string, sql: string): QueryResult {
     let i = 0;
     while (i < limit) {
         let row = rs.rows.at(i);
-        let cells = list.List<string>();
+        let cells = list.List<CellVal>();
         let j = 0;
         while (j < ncols) {
-            if (row.isNull(j)) { cells.push("NULL"); } else { cells.push(row.getText(j)); }
+            if (row.isNull(j)) { cells.push(CellVal("", true)); } else { cells.push(CellVal(row.getText(j), false)); }
             j = j + 1;
         }
         r.rows.push(cells);

@@ -5,7 +5,7 @@ pub fn statusBar(inner: Html): Html {
         <div class="status-left" id="statusbar-left"
              hx-get="/chrome?part=status" hx-trigger="connected from:body" hx-swap="innerHTML">{inner}</div>
         <div class="status-right">
-            <span>0 ms</span>
+            <span id="status-ms">0 ms</span>
             <span>Ln 1, Col 1</span>
             <span class="badge-sql">SQL</span>
         </div>

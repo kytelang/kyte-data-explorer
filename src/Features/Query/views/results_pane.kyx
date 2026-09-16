@@ -1,63 +1,81 @@
 // The results-pane body, swapped into #results-body after a run. It carries both the
-// Results view (the grid) and the Messages view (execution status / error); the tab
-// buttons in the pane header toggle between them, and studio.js activates Messages on
-// an error, Results otherwise.
+// Results view (a paginated grid) and the Messages view (execution status / error).
+// studio.js reads the data-* attributes on .tabwrap to drive pagination, the copy
+// button, the results/messages tab switch, and the status-bar timing.
 import list;
 import Shared.Db;
 
-fn rowSummary(r: Db.QueryResult): string {
-    if (r.truncated) { return `Showing first ${r.rows.size()} of ${r.rowCount} rows.`; }
-    return `${r.rowCount} rows.`;
+fn countText(r: Db.QueryResult): string {
+    if (r.truncated) { return `Showing first ${r.rows.size()} of ${r.rowCount} rows (capped)`; }
+    return `${r.rowCount} rows`;
 }
 
+fn msText(r: Db.QueryResult): string { return `${r.elapsedMs} ms`; }
+
 // The grid (Results tab). DDL / no-column / error results show the empty placeholder
-// here and put their status in Messages.
+// here and put their status in Messages. NULL cells render as a muted marker so they
+// are visually distinct from an empty string.
 fn resultsView(r: Db.QueryResult): Html {
     if (r.ok && r.columns.size() > 0) {
-        return <div class="grid-wrap" style="height:100%;overflow:auto">
-            <table class="grid">
-                <thead>
-                    <tr>
-                        {for (i in 0..r.columns.size()) { let cn = r.columns.get(i) ?? ""; <th>{cn}</th>; }}
-                    </tr>
-                </thead>
-                <tbody>
-                    {for (ri in 0..r.rows.size()) {
-                        let row = r.rows.get(ri) ?? list.List<string>();
+        return <div class="grid-scroll">
+            <div class="grid-wrap">
+                <table class="grid">
+                    <thead>
                         <tr>
-                            {for (ci in 0..row.size()) { let cell = row.get(ci) ?? ""; <td>{cell}</td>; }}
-                        </tr>;
-                    }}
-                </tbody>
-            </table>
+                            {for (i in 0..r.columns.size()) { let cn = r.columns.get(i) ?? ""; <th>{cn}</th>; }}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {for (ri in 0..r.rows.size()) {
+                            let row = r.rows.get(ri) ?? list.List<Db.CellVal>();
+                            <tr>
+                                {for (ci in 0..row.size()) {
+                                    let cell = row.get(ci) ?? Db.CellVal("", false);
+                                    {if (cell.isNull) { <td class="nullcell">NULL</td>; }}
+                                    {if (!cell.isNull) { <td>{cell.text}</td>; }}
+                                }}
+                            </tr>;
+                        }}
+                    </tbody>
+                </table>
+            </div>
+            <div class="pager">
+                <button type="button" class="pg-btn" data-page="prev">Prev</button>
+                <span class="pg-info"></span>
+                <button type="button" class="pg-btn" data-page="next">Next</button>
+                <span class="pg-spacer"></span>
+                <button type="button" class="pg-copy" data-copy="1">Copy</button>
+            </div>
         </div>;
     }
     return <div class="results-empty"><span><i class="ic ic-table"></i>&nbsp;&nbsp;No rows returned. See Messages.</span></div>;
 }
 
-// The Messages tab: green success line + counts, or the red error block.
+// The Messages tab: green success line with counts + timing, or the red error block.
 fn messagesView(r: Db.QueryResult): Html {
     if (!r.ok) {
         return <div class="messages">
-            <div class="err-title"><i class="ic ic-error"></i> Error executing query:</div>
+            <div class="err-title"><i class="ic ic-error"></i>&nbsp;Error executing query:</div>
             <div class="err-body">{r.error}</div>
+            <div class="muted">{msText(r)}</div>
         </div>;
     }
     return <div class="messages">
-        <div class="ok"><i class="ic ic-check"></i> Query executed successfully.</div>
-        <div>Rows: {rowSummary(r)}</div>
+        <div class="ok"><i class="ic ic-check"></i>&nbsp;Query executed successfully.</div>
+        <div>{countText(r)}</div>
+        <div>{msText(r)}</div>
         <div class="muted">Ready.</div>
     </div>;
 }
 
 pub fn resultsPane(r: Db.QueryResult): Html {
-    return <div class="tabwrap" data-error={errorFlag(r)} style="height:100%">
+    return <div class="tabwrap" data-error={errorFlag(r)} data-ms={msText(r)} data-pagesize="100" style="height:100%">
         <div class="tabview" data-view="results" style="height:100%">{resultsView(r)}</div>
         <div class="tabview hidden" data-view="messages">{messagesView(r)}</div>
     </div>;
 }
 
-// "1" when the run failed, so studio.js can switch to the Messages tab; "0" otherwise.
+// "1" when the run failed, so studio.js switches to the Messages tab; "0" otherwise.
 fn errorFlag(r: Db.QueryResult): string {
     if (r.ok) { return "0"; }
     return "1";
