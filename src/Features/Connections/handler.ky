@@ -32,14 +32,17 @@ pub struct ConnectHandler impl RouteHandler {
 
     async fn serve(self: ConnectHandler, ctx: Context): Response {
         let f = ctx.bind<ConnectForm>();
-        if (!string.eql(f.dbtype, "kaidb")) {
-            return response.Response(Status.Ok, connectModal(f.dbtype + " is not wired yet; kaidb is supported in this build."))
+        // The four SQL engines are wired; Mongo (document mode) is a later session.
+        let wired = string.eql(f.dbtype, "kaidb") || string.eql(f.dbtype, "postgres")
+            || string.eql(f.dbtype, "mysql") || string.eql(f.dbtype, "mssql");
+        if (!wired) {
+            return response.Response(Status.Ok, connectModal(f.dbtype + " is not wired yet; kaidb, postgres, mysql and mssql are supported in this build."))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
-        let r = await probeKaidb(f.host, f.port, f.user, f.password, f.dbname);
+        let r = await probe(f.dbtype, f.host, f.port, f.user, f.password, f.dbname);
         if (r.ok) {
-            let dsn = kaidbDsn(f.host, f.port, f.user, f.password, f.dbname);
-            self.conn.set("kaidb", dsn, f.host, f.port, f.dbname);
+            let dsn = dsnFor(f.dbtype, f.host, f.port, f.user, f.password, f.dbname);
+            self.conn.set(f.dbtype, dsn, f.host, f.port, f.dbname);
             // Close the modal and announce the connection. We dispatch `connected` on
             // <body> from a script rather than via an HX-Trigger header: the header
             // fires the event on the triggering form, which this swap removes, so it

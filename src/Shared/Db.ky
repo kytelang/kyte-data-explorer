@@ -8,12 +8,14 @@
 // avoiding for now (see Shared/Session.ky); for a desktop explorer that issues a
 // handful of catalog queries per click, the open/close cost is negligible.
 //
-// Introspection is per-driver: kaidb reads its `sys.*` system catalog, Postgres
-// reads `information_schema` / `pg_indexes`. Both go through the same shared
-// `data.db` result model, so the explorer code above this layer is driver-neutral.
-// mysql, mssql and mongo slot in as extra `dbtype` cases in later sessions.
+// Introspection is per-driver: kaidb reads its `sys.*` system catalog; Postgres, MySQL
+// and MSSQL read `information_schema` (plus each engine's index catalog). All go through
+// the same shared `data.db` result model, so the explorer above this layer is
+// driver-neutral. Mongo (document mode) is a later session.
 import novadb;
 import postgres;
+import mysql;
+import mssql;
 import data.db;
 import data.sql.pool;
 import list;
@@ -92,36 +94,83 @@ pub fn kaidbDsn(host: string, port: string, user: string, password: string, dbna
     return auth + host + ":" + port + "?db=" + db + "&tls=false";
 }
 
-// Opens the right driver pool for a stored connection. Only the drivers wired so
-// far are handled; an unknown dbtype falls back to kaidb so the caller still gets
-// a usable pool rather than a crash (the connect probe would already have failed
-// for a truly unsupported target).
-fn poolFor(dbtype: string, dsn: string): pool.Pool {
+// Builds the driver-appropriate connection string from the connect-form fields. kaidb
+// uses its own `user:pass@host:port?db=..&tls=..` form; the SQL drivers use URL-style
+// DSNs. TLS is left off by default here (sslmode=disable / encrypt=false) so a plain
+// local instance connects; MSSQL in particular is kept plaintext because TLS to MSSQL
+// has a known driver issue. The userinfo prefix is omitted when no user is given.
+pub fn dsnFor(dbtype: string, host: string, port: string, user: string, password: string, dbname: string): string {
+    if (string.eql(dbtype, "kaidb")) { return kaidbDsn(host, port, user, password, dbname); }
+    let auth = "";
+    if (!string.eql(user, "")) { auth = user + ":" + password + "@"; }
+    let hostPort = host + ":" + port;
     if (string.eql(dbtype, "postgres")) {
-        return pool.Pool(postgres.PgDriver(), dsn, 1);
+        return "postgresql://" + auth + hostPort + "/" + dbname + "?sslmode=disable";
     }
+    if (string.eql(dbtype, "mysql")) {
+        return "mysql://" + auth + hostPort + "/" + dbname + "?sslmode=disable";
+    }
+    if (string.eql(dbtype, "mssql")) {
+        return "mssql://" + auth + hostPort + "/" + dbname + "?encrypt=false";
+    }
+    return kaidbDsn(host, port, user, password, dbname);
+}
+
+// Escapes a string for inlining as a SQL string literal (wraps in single quotes and
+// doubles any embedded quote). Introspection queries inline the table name this way
+// rather than binding a parameter, because the four SQL drivers use different
+// placeholder markers ($N / ? / @P); a literal is portable. Table names come from the
+// engine's own catalog, so this is a defensive escape, not untrusted input.
+fn sqlLit(s: string): string {
+    let out = "'";
+    let i = 0;
+    while (i < s.length) {
+        let ch = string.slice(s, i, i + 1);
+        if (string.eql(ch, "'")) { out = out + "''"; } else { out = out + ch; }
+        i = i + 1;
+    }
+    return out + "'";
+}
+
+// True for the SQL drivers whose column catalog reports is_nullable as 'YES'/'NO'
+// (Postgres, MySQL, MSSQL). kaidb reports 0/1 and also carries a primary-key flag.
+fn isInfoSchemaDriver(dbtype: string): bool {
+    return string.eql(dbtype, "postgres") || string.eql(dbtype, "mysql") || string.eql(dbtype, "mssql");
+}
+
+// Opens the right driver pool for a stored connection. An unknown dbtype falls back to
+// kaidb so the caller still gets a usable pool rather than a crash (the connect probe
+// would already have failed for a truly unsupported target).
+fn poolFor(dbtype: string, dsn: string): pool.Pool {
+    if (string.eql(dbtype, "postgres")) { return pool.Pool(postgres.PgDriver(), dsn, 1); }
+    if (string.eql(dbtype, "mysql")) { return pool.Pool(mysql.MyDriver(), dsn, 1); }
+    if (string.eql(dbtype, "mssql")) { return pool.Pool(mssql.MssqlDriver(), dsn, 1); }
     return pool.Pool(novadb.KyteDriver(), dsn, 1);
 }
 
-// Probes a kaidb target: opens a pool, runs a trivial liveness query, tears down.
-// We treat the server as reachable if the query round-trips at all (a SQL error
-// still proves the server answered); only a connection-class SQLSTATE ("08...")
-// counts as not connected. The real schema read happens later, once the
-// connection is recorded as active.
-pub async fn probeKaidb(host: string, port: string, user: string, password: string, dbname: string): ProbeResult {
-    let dsn = kaidbDsn(host, port, user, password, dbname);
-    let p = pool.Pool(novadb.KyteDriver(), dsn, 1);
+// Probes a target of any wired dbtype: opens a pool, runs a trivial liveness query,
+// tears down. The server is treated as reachable if the query round-trips at all (a
+// SQL error still proves the server answered, which is what matters for kaidb, whose
+// parser rejects `SELECT 1`); only a connection-class SQLSTATE ("08...") counts as not
+// connected. The real schema read happens later, once the connection is active.
+pub async fn probe(dbtype: string, host: string, port: string, user: string, password: string, dbname: string): ProbeResult {
+    let dsn = dsnFor(dbtype, host, port, user, password, dbname);
+    let p = poolFor(dbtype, dsn);
     let conn = await p.acquire();
     let rs = await conn.query("SELECT 1", list.List<db.DbValue>());
     p.release(conn);
     p.closeAll();
     if (rs.ok()) {
+        return ProbeResult(true, "Connected to " + dbtype + " at " + host + ":" + port + ".");
+    }
+    // kaidb rejects the trivial `SELECT 1` at the parser, so for kaidb ONLY a SQL
+    // error still proves the server answered (reachable); only a connection-class
+    // SQLSTATE ("08...") means not connected. Every other engine accepts `SELECT 1`,
+    // so any error there is a genuine failure to report.
+    if (string.eql(dbtype, "kaidb") && !string.startsWith(rs.err.code, "08")) {
         return ProbeResult(true, "Connected to kaidb at " + host + ":" + port + ".");
     }
-    if (string.startsWith(rs.err.code, "08")) {
-        return ProbeResult(false, rs.err.message);
-    }
-    return ProbeResult(true, "Connected to kaidb at " + host + ":" + port + ".");
+    return ProbeResult(false, rs.err.message);
 }
 
 // Lists the user tables of the active connection, sorted by the query. System
@@ -134,6 +183,10 @@ pub async fn listTables(dbtype: string, dsn: string): list.List<string> {
     let sql = "SELECT name FROM sys.tables";
     if (string.eql(dbtype, "postgres")) {
         sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name";
+    } else if (string.eql(dbtype, "mysql")) {
+        sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name";
+    } else if (string.eql(dbtype, "mssql")) {
+        sql = "SELECT table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE' ORDER BY table_name";
     }
     let rs = await conn.query(sql, list.List<db.DbValue>());
     if (rs.ok()) {
@@ -156,14 +209,15 @@ pub async fn listColumns(dbtype: string, dsn: string, table: string): list.List<
     let out = list.List<ColumnInfo>();
     let p = poolFor(dbtype, dsn);
     let conn = await p.acquire();
-    let params = list.List<db.DbValue>();
-    params.push(db.dbText(table));
-    let sql = "SELECT name, data_type, is_nullable, is_primary_key FROM sys.columns WHERE table_name = $1 ORDER BY ordinal";
-    let pg = string.eql(dbtype, "postgres");
-    if (pg) {
-        sql = "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position";
+    let lit = sqlLit(table);
+    let info = isInfoSchemaDriver(dbtype);
+    let sql = "SELECT name, data_type, is_nullable, is_primary_key FROM sys.columns WHERE table_name = " + lit + " ORDER BY ordinal";
+    if (string.eql(dbtype, "mysql")) {
+        sql = "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = " + lit + " AND table_schema = DATABASE() ORDER BY ordinal_position";
+    } else if (info) {
+        sql = "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = " + lit + " ORDER BY ordinal_position";
     }
-    let rs = await conn.query(sql, params);
+    let rs = await conn.query(sql, list.List<db.DbValue>());
     if (rs.ok()) {
         let i = 0;
         while (i < rs.rows.size()) {
@@ -172,7 +226,7 @@ pub async fn listColumns(dbtype: string, dsn: string, table: string): list.List<
             let dtype = row.getText(1);
             let nullable = false;
             let pk = false;
-            if (pg) {
+            if (info) {
                 nullable = string.eql(row.getText(2), "YES");
             } else {
                 nullable = !string.eql(row.getText(2), "0");
@@ -192,13 +246,16 @@ pub async fn listIndexes(dbtype: string, dsn: string, table: string): list.List<
     let out = list.List<IndexInfo>();
     let p = poolFor(dbtype, dsn);
     let conn = await p.acquire();
-    let params = list.List<db.DbValue>();
-    params.push(db.dbText(table));
-    let sql = "SELECT name FROM sys.indexes WHERE table_name = $1";
+    let lit = sqlLit(table);
+    let sql = "SELECT name FROM sys.indexes WHERE table_name = " + lit;
     if (string.eql(dbtype, "postgres")) {
-        sql = "SELECT indexname FROM pg_indexes WHERE tablename = $1 ORDER BY indexname";
+        sql = "SELECT indexname FROM pg_indexes WHERE tablename = " + lit + " ORDER BY indexname";
+    } else if (string.eql(dbtype, "mysql")) {
+        sql = "SELECT DISTINCT index_name FROM information_schema.statistics WHERE table_name = " + lit + " AND table_schema = DATABASE()";
+    } else if (string.eql(dbtype, "mssql")) {
+        sql = "SELECT name FROM sys.indexes WHERE object_id = OBJECT_ID(" + lit + ") AND name IS NOT NULL";
     }
-    let rs = await conn.query(sql, params);
+    let rs = await conn.query(sql, list.List<db.DbValue>());
     if (rs.ok()) {
         let i = 0;
         while (i < rs.rows.size()) {
