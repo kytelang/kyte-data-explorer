@@ -1,14 +1,14 @@
-// The studio page shell: the one full-document view. It wires the three bar partials
-// (title, activity, status) into the outer frame and leaves the explorer and content
-// panels as placeholders that later sessions fill over htmx. Styling lives in the
-// static /studio.css (served from wwwroot) so the CSS is not run through KyX escaping.
-// htmx is loaded from a CDN for now; it will be vendored into wwwroot before the desktop
-// (webview) packaging session, since a desktop app must run offline.
+// The studio page shell, matching the reference VS Code-style layout: a title bar, a
+// thin activity rail, the object-explorer tree, a query workspace (tabs + Run toolbar +
+// Monaco editor + results pane), and a status bar, plus a modal root for the connection
+// dialog. The editor and results live in the shell (not swapped), so Monaco initialises
+// once on load (studio.js). The explorer, title, status and toolbar-connection fragments
+// refresh on the htmx `connected` event fired by a successful connect.
 import Features.Shell.views.title_bar;
 import Features.Shell.views.activity_bar;
 import Features.Shell.views.status_bar;
 
-pub fn page(): Html {
+pub fn page(connected: bool, host: string, port: string, dbname: string, engine: string, titleText: string, connLabel: string): Html {
     return <html lang="en">
         <head>
             <meta charset="utf-8"/>
@@ -20,27 +20,89 @@ pub fn page(): Html {
             <script src="/studio.js"></script>
         </head>
         <body>
-            <div class="studio">
-                {titleBar()}
-                <div class="studio-main">
+            <div class="app">
+                {titleBar(titleText)}
+                <div class="workbench">
                     {activityBar()}
-                    <aside class="explorer" id="explorer"
-                           hx-get="/explorer"
-                           hx-trigger="connected from:body"
-                           hx-swap="innerHTML">
-                        <div class="panel-title">Explorer</div>
-                        <p class="muted">No connection yet. Connecting to a database will list its schemas, tables and indexes here.</p>
+                    <aside class="explorer">
+                        <div class="explorer-head">
+                            <span class="explorer-title">Object Explorer</span>
+                            <div class="explorer-actions">
+                                <button type="button" title="Refresh Active Schema"
+                                        hx-get="/explorer" hx-target="#explorer-body" hx-swap="innerHTML"><i class="ic ic-refresh"></i></button>
+                                <button type="button" title="Add New Connection"
+                                        hx-get="/connect" hx-target="#modal-root" hx-swap="innerHTML"><i class="ic ic-add"></i></button>
+                            </div>
+                        </div>
+                        <div class="explorer-body" id="explorer-body"
+                             hx-get="/explorer" hx-trigger="connected from:body" hx-swap="innerHTML">
+                            {explorerInitial(connected)}
+                        </div>
                     </aside>
-                    <section class="content" id="content">
-                        <div class="empty">
-                            <h1>Kyte Data Studio</h1>
-                            <p class="muted">A database studio for kaidb, Postgres, MySQL, MSSQL and MongoDB. Connect a database to begin.</p>
-                            <button class="primary" hx-get="/connect" hx-target="#content" hx-swap="innerHTML">Connect a database</button>
+
+                    <section class="workspace">
+                        <div class="tabsbar">
+                            <div class="tab active"><span><i class="ic ic-doc"></i> Query 1.sql</span><span class="close"><i class="ic ic-x"></i></span></div>
+                            <button class="tab-add" type="button" title="New Query">+</button>
+                        </div>
+                        <div class="toolbar">
+                            <div class="left">
+                                <button class="btn-run" id="run-btn" type="button"
+                                        hx-post="/query" hx-include="#sql-src"
+                                        hx-target="#results-body" hx-swap="innerHTML"
+                                        hx-indicator="#run-spin"><span><i class="ic ic-play"></i></span> Run</button>
+                                <button class="btn-cancel" type="button" disabled><span><i class="ic ic-stop"></i></span> Cancel</button>
+                                <span id="run-spin" class="htmx-indicator" style="color:#86efac;font-size:12px">running...</span>
+                                <span class="toolbar-sep">|</span>
+                                <span class="toolbar-label">Connection:</span>
+                                <span class="conn-pill" id="toolbar-conn"
+                                      hx-get="/chrome?part=toolbar" hx-trigger="connected from:body" hx-swap="innerHTML">{connLabel}</span>
+                            </div>
+                            <div class="right">
+                                <button class="btn-format" type="button">Format SQL</button>
+                            </div>
+                        </div>
+                        <div class="editor-wrap">
+                            <textarea id="sql-src" name="sql" class="sql-hidden"></textarea>
+                            <div id="editor"></div>
+                        </div>
+                        <div class="splitter"></div>
+                        <div class="resultspane">
+                            <div class="results-head">
+                                <div class="results-tabs">
+                                    <button class="results-tab active" type="button" data-tab="results">Results</button>
+                                    <button class="results-tab" type="button" data-tab="messages">Messages</button>
+                                </div>
+                                <div class="export">
+                                    <button type="button" title="Save as CSV"><i class="ic ic-save"></i> CSV</button>
+                                    <button type="button" title="Save as JSON"><i class="ic ic-save"></i> JSON</button>
+                                    <button type="button" title="Save as Excel"><i class="ic ic-save"></i> Excel</button>
+                                </div>
+                            </div>
+                            <div class="results-body" id="results-body">
+                                <div class="results-empty"><span><i class="ic ic-table"></i>&nbsp;&nbsp;No results to display. Run a SQL query to see data.</span></div>
+                            </div>
                         </div>
                     </section>
                 </div>
-                {statusBar()}
+                {statusBar(statusLeft(connected, host, engine, dbname))}
+                <div class="modal-root" id="modal-root"></div>
             </div>
         </body>
     </html>;
+}
+
+// The explorer body before any `connected` event has fired: the empty state when not
+// connected, or (on a full reload with an active connection) a prompt to refresh.
+fn explorerInitial(connected: bool): Html {
+    if (connected) {
+        return <div class="oe-loading" hx-get="/explorer" hx-trigger="load" hx-swap="innerHTML">
+            <p class="muted" style="color:#888;padding:8px">Loading schema...</p>
+        </div>;
+    }
+    return <div class="oe-empty">
+        <span class="icon"><i class="ic ic-plug"></i></span>
+        <p>No active database connections.</p>
+        <button type="button" hx-get="/connect" hx-target="#modal-root" hx-swap="innerHTML">Add Connection</button>
+    </div>;
 }

@@ -1,12 +1,16 @@
-// The left activity rail (VS Code style): icon buttons that switch the content pane.
-// "DB" opens the connect form, "SQL" opens the query editor; both htmx-swap into the
-// content area. "Log" (query history) is a later session.
+// The activity rail (VS Code style). The database plug opens the connection modal
+// (loads the connect form into #modal-root); the others are visual placeholders, wired
+// in later sessions. The plug carries the active accent bar.
 pub fn activityBar(): Html {
     return <nav class="activitybar">
-        <button class="act" title="Connect" type="button"
-                hx-get="/connect" hx-target="#content" hx-swap="innerHTML">DB</button>
-        <button class="act" title="SQL editor" type="button"
-                hx-get="/query" hx-target="#content" hx-swap="innerHTML">SQL</button>
-        <button class="act" title="History" type="button">Log</button>
+        <div class="top">
+            <button class="act active" type="button" title="Database Connections"
+                    hx-get="/connect" hx-target="#modal-root" hx-swap="innerHTML"><i class="ic ic-plug"></i></button>
+            <button class="act" type="button" title="Search"><i class="ic ic-search"></i></button>
+            <button class="act" type="button" title="Explorer"><i class="ic ic-files"></i></button>
+        </div>
+        <div class="bottom">
+            <button class="act" type="button" title="Settings"><i class="ic ic-gear"></i></button>
+        </div>
     </nav>;
 }

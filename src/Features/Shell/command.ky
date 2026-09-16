@@ -1,0 +1,7 @@
+// The bound shape for GET /chrome: which connection-aware fragment to return
+// ("title", "status" or "toolbar"). Filled from the `?part=` query string.
+@serializable
+pub struct ChromePart {
+    pub part: string,
+    init() { self.part = "title"; }
+}

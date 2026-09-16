@@ -1,9 +1,33 @@
-// The bottom status bar: connection state on the left, app version on the right.
-// Static for now; later sessions update the left segment with the live driver,
-// database name, and last query timing.
-pub fn statusBar(): Html {
+// The bottom status bar (VS Code blue): connection state on the left, cursor/latency
+// and a SQL badge on the right. Its left half refreshes on the `connected` event.
+pub fn statusBar(inner: Html): Html {
     return <footer class="statusbar">
-        <span class="status-conn" id="status-conn">Ready</span>
-        <span class="status-version">Kyte Data Studio 0.1.0</span>
+        <div class="status-left" id="statusbar-left"
+             hx-get="/chrome?part=status" hx-trigger="connected from:body" hx-swap="innerHTML">{inner}</div>
+        <div class="status-right">
+            <span>0 ms</span>
+            <span>Ln 1, Col 1</span>
+            <span class="badge-sql">SQL</span>
+        </div>
     </footer>;
+}
+
+// The left-half content, rendered both inline (initial load) and by the /chrome
+// endpoint on reconnect. `engine`/`dbname` are only shown when connected.
+pub fn statusLeft(connected: bool, host: string, engine: string, dbname: string): Html {
+    if (!connected) {
+        return <span class="offline"><i class="ic ic-dot"></i><span>Offline</span></span>;
+    }
+    // Build the labels as whole strings: KyX trims a text run's leading whitespace after
+    // an interpolation, so "Engine: {engine}" would render as "Engine:kaidb".
+    let conn = "Connected to " + host;
+    let eng = "Engine: " + engine;
+    let db = "DB: " + dbname;
+    return <div class="status-left-inner" style="display:flex;align-items:center;gap:16px">
+        <span class="online"><span class="dot"></span><span>{conn}</span></span>
+        <span class="status-sep">|</span>
+        <span>{eng}</span>
+        <span class="status-sep">|</span>
+        <span>{db}</span>
+    </div>;
 }

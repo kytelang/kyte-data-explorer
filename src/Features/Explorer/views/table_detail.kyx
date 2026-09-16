@@ -1,40 +1,33 @@
-// One table's detail, loaded under its node in the explorer tree: a column grid
-// (name, type, nullability, primary-key flag) and the list of indexes.
+// One table's detail, lazily loaded into its tree node: a Columns subfolder (name and
+// type per column) and an Indexes subfolder. Both are collapsible <details>; columns
+// open by default, indexes stay collapsed, matching the reference.
 import list;
 import Shared.Db;
 
-// Small text helpers: KYX interpolation takes a value, so the yes/no and PK marks
-// are computed here (a plain function body allows an if-else expression) and then
-// interpolated into the cells.
-fn yesNo(b: bool): string { return if (b) "yes" else "no"; }
-fn pkMark(b: bool): string { return if (b) "PK" else ""; }
-
 pub fn tableDetail(table: string, cols: list.List<Db.ColumnInfo>, idxs: list.List<Db.IndexInfo>): Html {
-    return <div class="detail-box">
-        <div class="detail-h">Columns</div>
-        <table class="cols">
-            <thead><tr><th>Name</th><th>Type</th><th>Null</th><th>PK</th></tr></thead>
-            <tbody>
+    return <div class="oe-detail">
+        <details open class="oe-subfolder">
+            <summary><div class="oe-row subfolder"><span class="ficon"></span><span class="name">Columns</span></div></summary>
+            <div class="oe-leaves">
                 {for (i in 0..cols.size()) {
                     let c = cols.get(i) ?? Db.ColumnInfo("", "", false, false);
-                    <tr>
-                        <td>{c.name}</td>
-                        <td class="muted">{c.dataType}</td>
-                        <td>{yesNo(c.nullable)}</td>
-                        <td>{pkMark(c.primaryKey)}</td>
-                    </tr>;
+                    <div class="oe-col"><span>{c.name}</span><span class="type">({c.dataType})</span></div>;
                 }}
-            </tbody>
-        </table>
-        <div class="detail-h">Indexes</div>
-        {if (idxs.size() == 0) { <div class="muted">No indexes.</div>; }}
-        {if (idxs.size() > 0) {
-            <ul class="idx-list">
-                {for (i in 0..idxs.size()) {
-                    let ix = idxs.get(i) ?? Db.IndexInfo("");
-                    <li>{ix.name}</li>;
+            </div>
+        </details>
+        <details class="oe-subfolder">
+            <summary><div class="oe-row subfolder"><span class="ficon"></span><span class="name">Indexes</span></div></summary>
+            <div class="oe-leaves">
+                {if (idxs.size() == 0) { <div class="oe-none">No indexes</div>; }}
+                {if (idxs.size() > 0) {
+                    <div>
+                        {for (i in 0..idxs.size()) {
+                            let ix = idxs.get(i) ?? Db.IndexInfo("");
+                            <div class="oe-index"><span class="bolt"><i class="ic ic-bolt"></i></span><span>{ix.name}</span></div>;
+                        }}
+                    </div>;
                 }}
-            </ul>;
-        }}
+            </div>
+        </details>
     </div>;
 }

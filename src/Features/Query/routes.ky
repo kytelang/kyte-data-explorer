@@ -1,9 +1,8 @@
-// The Query feature route table: the SQL editor panel (GET /query) and running a
-// statement (POST /query). Registered once from the composition root.
+// The Query feature route table: run a statement (POST /query). The editor panel is
+// now part of the shell (layout.kyx), so there is no GET panel route.
 import Shared.AppContext;
 import Features.Query.handler;
 
 pub fn registerQuery(ctx: AppContext): void {
-    ctx.app.get("/query", GetQueryPanelHandler(ctx.conn));
     ctx.app.post("/query", RunQueryHandler(ctx.conn));
 }

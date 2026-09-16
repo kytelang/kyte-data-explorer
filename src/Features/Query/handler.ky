@@ -1,31 +1,13 @@
-// The Query feature handlers.
-//
-// GET /query   -> the SQL editor panel (Monaco island + Run button + results area),
-//                 loaded into the content pane.
-// POST /query  -> run the submitted SQL against the active connection and return the
-//                 results grid (or an inline error) into the results area.
+// The Query feature handler: POST /query runs the submitted SQL against the active
+// connection and returns the results-pane body (grid + messages) into #results-body.
 import web.routing;
 import web.response;
 import web.status;
 import Shared.Session;
 import Shared.Db;
 import Features.Query.command;
-import Features.Query.views.query_panel;
 import Features.Query.views.results_pane;
 
-// GET /query: render the editor panel. It reads the active connection only to label
-// the header and to hint when nothing is connected yet.
-pub struct GetQueryPanelHandler impl RouteHandler {
-    conn: ActiveConnection,
-    init(conn: ActiveConnection) { self.conn = conn; }
-
-    async fn serve(self: GetQueryPanelHandler, ctx: Context): Response {
-        return response.Response(Status.Ok, queryPanel(self.conn.connected, self.conn.label()))
-            .setHeader("Content-Type", "text/html; charset=utf-8");
-    }
-}
-
-// POST /query: bind the SQL, run it against the active connection, return the grid.
 pub struct RunQueryHandler impl RouteHandler {
     conn: ActiveConnection,
     init(conn: ActiveConnection) { self.conn = conn; }

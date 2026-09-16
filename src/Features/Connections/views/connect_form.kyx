@@ -1,26 +1,50 @@
-// The connection form, loaded into the content area by the "Connect a database" button.
-// It POSTs to /connect and swaps the returned result fragment into #conn-result. Only
-// kaidb is wired this session; the dbtype select carries the others for later sessions.
-pub fn connectForm(): Html {
-    return <div class="conn-form">
-        <h2>Connect a database</h2>
-        <form hx-post="/connect" hx-target="#conn-result" hx-swap="innerHTML">
-            <label>Type
-                <select name="dbtype">
-                    <option value="kaidb">kaidb</option>
-                    <option value="postgres">Postgres (soon)</option>
-                    <option value="mysql">MySQL (soon)</option>
-                    <option value="mssql">MSSQL (soon)</option>
-                    <option value="mongodb">MongoDB (soon)</option>
-                </select>
-            </label>
-            <label>Host <input name="host" value="127.0.0.1"/></label>
-            <label>Port <input name="port" value="3009" placeholder="3009"/></label>
-            <label>User <input name="user" placeholder="(optional)"/></label>
-            <label>Password <input name="password" type="password" placeholder="(optional)"/></label>
-            <label>Database <input name="dbname" placeholder="default"/></label>
-            <button type="submit">Connect</button>
-        </form>
-        <div id="conn-result" class="conn-result"></div>
+// The connection dialog, rendered as a modal overlay into #modal-root. It posts to
+// /connect targeting #modal-root: on success the handler returns an empty body (the
+// modal closes) plus an HX-Trigger that refreshes the explorer and chrome; on failure
+// it returns this modal again with the error banner filled in. The backdrop and the x
+// close the modal (studio.js clears #modal-root on a [data-close-modal] click).
+import string;
+
+pub fn connectModal(errorMsg: string): Html {
+    return <div class="modal-backdrop">
+        <div class="modal">
+            <div class="modal-head">
+                <h2>Connect to a database</h2>
+                <button class="x" type="button" data-close-modal="1"><i class="ic ic-x"></i></button>
+            </div>
+            <form class="modal-body" hx-post="/connect" hx-target="#modal-root" hx-swap="innerHTML">
+                {errorBanner(errorMsg)}
+                <label>Type
+                    <select name="dbtype">
+                        <option value="kaidb">kaidb</option>
+                        <option value="postgres">postgres</option>
+                        <option value="mysql">mysql</option>
+                        <option value="mssql">mssql</option>
+                        <option value="mongodb">mongodb</option>
+                    </select>
+                </label>
+                <div class="form-grid">
+                    <label>Host<input name="host" value="127.0.0.1" autocomplete="off"/></label>
+                    <label>Port<input name="port" value="3009" autocomplete="off"/></label>
+                </div>
+                <div class="form-grid">
+                    <label>User<input name="user" value="" autocomplete="off"/></label>
+                    <label>Password<input name="password" type="password" value="" autocomplete="off"/></label>
+                </div>
+                <label>Database<input name="dbname" value="default" autocomplete="off"/></label>
+                <div class="modal-actions">
+                    <button class="ghost" type="button" data-close-modal="1">Cancel</button>
+                    <button class="primary" type="submit">Connect</button>
+                </div>
+            </form>
+        </div>
     </div>;
 }
+
+// The error banner inside the modal, shown only when a message is present.
+fn errorBanner(msg: string): Html {
+    if (string.eql(msg, "")) { return <span></span>; }
+    return <div class="result err">{msg}</div>;
+}
+
+import string;

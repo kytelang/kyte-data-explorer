@@ -1,30 +1,49 @@
-// The explorer sidebar's inner content: the connection label and the list of user
-// tables. Each table is a button that, when clicked, htmx-loads its columns and
-// indexes from /explorer/table into the detail div beneath it. This whole fragment
-// replaces the #explorer panel's inner HTML, so it carries its own panel title.
+// The object-explorer tree: a single connection root, then Databases and Tables
+// folders, each table expandable to its Columns and Indexes. Folders and rows use
+// native <details>/<summary> so expand/collapse needs no JS; folder icons and the
+// table chevron flip via CSS on the [open] state. Each table lazily htmx-loads its
+// columns + indexes into its detail div the first time it is opened.
 import list;
 
-pub fn explorerTree(tables: list.List<string>, connected: bool, label: string): Html {
+pub fn explorerTree(connected: bool, host: string, port: string, dbname: string, tables: list.List<string>): Html {
     if (!connected) {
-        return <div>
-            <div class="panel-title">Explorer</div>
-            <p class="muted">No connection yet. Connect a database to list its tables, columns and indexes here.</p>
+        return <div class="oe-empty">
+            <span class="icon"><i class="ic ic-plug"></i></span>
+            <p>No active database connections.</p>
+            <button type="button" hx-get="/connect" hx-target="#modal-root" hx-swap="innerHTML">Add Connection</button>
         </div>;
     }
-    return <div>
-        <div class="panel-title">Explorer</div>
-        <div class="conn-label">{label}</div>
-        <ul class="tree">
-            {for (i in 0..tables.size()) {
-                let t = tables.get(i) ?? "";
-                <li class="tree-item">
-                    <button class="tree-toggle"
-                            hx-get={"/explorer/table?name=" + t}
-                            hx-target={"#tbl-" + t}
-                            hx-swap="innerHTML">{t}</button>
-                    <div class="tree-detail" id={"tbl-" + t}></div>
-                </li>;
-            }}
-        </ul>
+    let heading = host + ":" + port + " (" + dbname + ")";
+    return <div class="oe-conn">
+        <div class="oe-conn-head">
+            <div class="label"><span class="bolt"><i class="ic ic-bolt"></i></span><span class="host">{heading}</span></div>
+            <span class="live" title="Active Context"></span>
+        </div>
+        <div class="oe-conn-body">
+            <details open class="oe-folder">
+                <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Databases</span></div></summary>
+                <div class="oe-children">
+                    <div class="oe-row db active"><span><i class="ic ic-db"></i></span><span class="name">{dbname}</span></div>
+                </div>
+            </details>
+            <details open class="oe-folder">
+                <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Tables</span></div></summary>
+                <div class="oe-children">
+                    {if (tables.size() == 0) { <div class="oe-none">No tables found</div>; }}
+                    {for (i in 0..tables.size()) {
+                        let tbl = tables.get(i) ?? "";
+                        <details class="oe-table">
+                            <summary hx-get={"/explorer/table?name=" + tbl}
+                                     hx-trigger="click once"
+                                     hx-target={"#det-" + tbl}
+                                     hx-swap="innerHTML">
+                                <div class="oe-row table"><span><i class="ic ic-table"></i></span><span class="name">{tbl}</span><span class="chev"></span></div>
+                            </summary>
+                            <div class="oe-children" id={"det-" + tbl}><div class="oe-none">Loading...</div></div>
+                        </details>;
+                    }}
+                </div>
+            </details>
+        </div>
     </div>;
 }

@@ -1,20 +1,64 @@
-// The shell feature's handlers: the studio page at GET "/" and a liveness probe at
-// GET "/healthz". Both are dependency-free for now (no repository, no database), so
-// their structs hold no fields. Each implements the uniform RouteHandler shape:
-// one `async serve(ctx): Response`.
+// The shell feature's handlers: the studio page at GET "/", a liveness probe at
+// GET "/healthz", and GET "/chrome" which returns the small connection-aware fragments
+// (title text, status-bar left, toolbar connection pill) that refresh on the htmx
+// `connected` event. All three read the shared ActiveConnection.
 import web.routing;
 import web.response;
 import web.status;
+import string;
+import Shared.Session;
 import Features.Shell.views.layout;
+import Features.Shell.views.status_bar;
+import Features.Shell.command;
+
+// The active connection's engine label (the driver key), or "" when not connected.
+fn engineOf(conn: ActiveConnection): string {
+    if (!conn.connected) { return ""; }
+    return conn.dbtype;
+}
+
+// The title-bar line: "db - engine - host" when connected, else "Not Connected".
+fn titleTextOf(conn: ActiveConnection): string {
+    if (!conn.connected) { return "Not Connected"; }
+    return conn.dbname + " - " + conn.dbtype + " - " + conn.host;
+}
+
+// The toolbar connection pill: "host:port (db)" when connected, else "Not connected".
+fn pillOf(conn: ActiveConnection): string {
+    if (!conn.connected) { return "Not connected"; }
+    return conn.host + ":" + conn.port + " (" + conn.dbname + ")";
+}
 
 // Serves the full studio document. The KyX `page()` renders the <html> element; we
 // prepend the doctype so the browser (and later the webview) uses standards mode.
 pub struct ShellHandler impl RouteHandler {
-    init() {}
+    conn: ActiveConnection,
+    init(conn: ActiveConnection) { self.conn = conn; }
 
     async fn serve(self: ShellHandler, ctx: Context): Response {
-        let body = "<!doctype html>\n" + page();
+        let c = self.conn;
+        let body = "<!doctype html>\n" + page(c.connected, c.host, c.port, c.dbname, engineOf(c), titleTextOf(c), pillOf(c));
         return response.Response(Status.Ok, body)
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}
+
+// GET /chrome?part=title|status|toolbar: the small connection-aware fragments used by
+// the title bar, status bar and toolbar to refresh themselves after a connect.
+pub struct ChromeHandler impl RouteHandler {
+    conn: ActiveConnection,
+    init(conn: ActiveConnection) { self.conn = conn; }
+
+    async fn serve(self: ChromeHandler, ctx: Context): Response {
+        let q = ctx.bind<ChromePart>();
+        let c = self.conn;
+        if (string.eql(q.part, "status")) {
+            return response.Response(Status.Ok, statusLeft(c.connected, c.host, engineOf(c), c.dbname))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        let text = titleTextOf(c);
+        if (string.eql(q.part, "toolbar")) { text = pillOf(c); }
+        return response.Response(Status.Ok, response.raw(text))
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
 }

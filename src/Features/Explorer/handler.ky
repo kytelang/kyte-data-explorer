@@ -25,12 +25,13 @@ pub struct ExplorerHandler impl RouteHandler {
     init(conn: ActiveConnection) { self.conn = conn; }
 
     async fn serve(self: ExplorerHandler, ctx: Context): Response {
-        if (!self.conn.connected) {
-            return response.Response(Status.Ok, explorerTree(list.List<string>(), false, ""))
+        let c = self.conn;
+        if (!c.connected) {
+            return response.Response(Status.Ok, explorerTree(false, "", "", "", list.List<string>()))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
-        let tables = await listTables(self.conn.dbtype, self.conn.dsn);
-        return response.Response(Status.Ok, explorerTree(tables, true, self.conn.label()))
+        let tables = await listTables(c.dbtype, c.dsn);
+        return response.Response(Status.Ok, explorerTree(true, c.host, c.port, c.dbname, tables))
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
 }
