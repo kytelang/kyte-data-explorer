@@ -8,6 +8,10 @@ import web.app;
 import env;
 import list;
 import string;
+import webview;
+import process;
+import net.dial;
+import datetime;
 import data.migrate;
 import migrations;
 import Shared.Session;
@@ -72,9 +76,48 @@ fn runMigrations(): int {
     return 0;
 }
 
+// `--desktop` mode: run Studio as a native desktop window instead of a browser tab. The
+// HTTP server can only own one thread (its reactor loop), and the macOS webview must own
+// the main thread (the Cocoa run loop), so the two cannot share a process thread. We
+// therefore launch this same binary as the background server (a child process) and host
+// its pages in a native WKWebView window here on the main thread. When the window closes,
+// the child server is stopped.
+fn runDesktop(port: int): int {
+    let argv0 = env.args().get(0) ?? "kyte-studio";
+    let sargs = list.List<string>();
+    sargs.push("--server");
+    let child = process.Process.spawn(argv0, sargs);
+
+    // Wait (up to ~10s) for the server to accept connections before opening the window.
+    // No reactor runs in this parent process, so we poll with a blocking dial.
+    let deadline = datetime.nowNs() + 10000000000;
+    let ready = false;
+    while (datetime.nowNs() < deadline) {
+        let fd = dial.dial("127.0.0.1", port);
+        if (fd >= 0) { ready = true; }
+        if (ready) { break; }
+    }
+
+    let url = "http://127.0.0.1:" + `${port}`;
+    console.log("Opening Kyte Data Studio window at " + url);
+    let w = webview.Webview(false);
+    w.setTitle("Kyte Data Studio");
+    w.setSize(1280, 820, webview.HINT_NONE);
+    w.navigate(url);
+    w.run();
+    w.delete();
+    let _ = child.terminate();
+    return 0;
+}
+
 fn main(): int {
     // Deploy-time schema gate: `app --migrate` applies migrations and exits (see runMigrations).
     if (hasFlag(env.args(), "--migrate")) { return runMigrations(); }
+    // Desktop mode: a native window hosting the studio server (see runDesktop). The child
+    // server runs the normal browser path below, so there is no recursion.
+    if (hasFlag(env.args(), "--desktop")) {
+        return runDesktop(App().config.port(8080));
+    }
     let app = buildApp();
     // Configuration lives in app.yaml at the project root and is loaded for you into `app.config`
     // when `App()` is constructed -- you never load config by hand, and there are no environment
