@@ -111,7 +111,15 @@ button { font-family: inherit; }
   width: 256px; flex: 0 0 auto; background: var(--bg-elev);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column; user-select: none; font-size: 12px;
+  min-width: 180px; max-width: 600px;
 }
+
+/* Drag handle between the explorer and the workspace: resizes the explorer width. */
+.v-resizer {
+  width: 5px; flex: 0 0 auto; cursor: col-resize; background: transparent;
+  margin-left: -3px; z-index: 5; position: relative;
+}
+.v-resizer:hover, .v-resizer.dragging { background: var(--accent); }
 .explorer-head {
   height: 40px; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
   padding: 0 12px; border-bottom: 1px solid var(--border);
@@ -224,7 +232,8 @@ details[open] > summary > .oe-row.db .chev { transform: rotate(90deg); }
 #editor { position: absolute; inset: 0; }
 .sql-hidden { display: none; }
 .hidden { display: none; }
-.splitter { height: 4px; flex: 0 0 auto; background: var(--bg-elev); border-top: 1px solid var(--border-strong); border-bottom: 1px solid var(--border-strong); }
+.splitter { height: 5px; flex: 0 0 auto; background: var(--bg-elev); border-top: 1px solid var(--border-strong); border-bottom: 1px solid var(--border-strong); cursor: row-resize; }
+.splitter:hover, .splitter.dragging { background: var(--accent); }
 
 /* ---- Results pane ---- */
 .resultspane { height: 256px; flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); border-top: 1px solid var(--border); overflow: hidden; }

@@ -44,6 +44,8 @@ pub fn page(connected: bool, host: string, port: string, dbname: string, engine:
                         </div>
                     </aside>
 
+                    <div class="v-resizer" id="explorer-resizer"></div>
+
                     <section class="workspace">
                         <div class="tabsbar">
                             <div class="tabrow" id="tabrow"></div>

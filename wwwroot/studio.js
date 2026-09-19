@@ -544,3 +544,60 @@ document.addEventListener("input", function (e) {
   if (e.target && e.target.id === "oe-filter") { studioFilterTree(e.target.value); return; }
   if (e.target.closest && e.target.closest("#ct-rows")) studioSerializeColumns();
 });
+
+// ---- Panel resizing --------------------------------------------------------------
+// Two drag handles: the vertical bar (#explorer-resizer) between the explorer and the
+// workspace sets the explorer width, and the horizontal .splitter between the editor and
+// the results pane sets the results height (the editor takes the remaining space). Both
+// clamp to sensible bounds and re-layout Monaco after each move so the editor never ends
+// up sized to a stale box.
+(function () {
+  function makeDraggable(handle, onMove, cursor) {
+    if (!handle) return;
+    handle.addEventListener("mousedown", function (start) {
+      start.preventDefault();
+      handle.classList.add("dragging");
+      var prevCursor = document.body.style.cursor;
+      var prevSelect = document.body.style.userSelect;
+      document.body.style.cursor = cursor;
+      document.body.style.userSelect = "none";
+      function move(ev) { onMove(ev); if (window.__ed) { try { window.__ed.layout(); } catch (e) {} } }
+      function up() {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        handle.classList.remove("dragging");
+        document.body.style.cursor = prevCursor;
+        document.body.style.userSelect = prevSelect;
+        if (window.__ed) { try { window.__ed.layout(); } catch (e) {} }
+      }
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+  }
+
+  function initResizers() {
+    var explorer = document.querySelector(".explorer");
+    makeDraggable(document.getElementById("explorer-resizer"), function (ev) {
+      if (!explorer) return;
+      var left = explorer.getBoundingClientRect().left;
+      var w = Math.max(180, Math.min(600, ev.clientX - left));
+      explorer.style.width = w + "px";
+    }, "col-resize");
+
+    var results = document.querySelector(".resultspane");
+    var workspace = document.querySelector(".workspace");
+    makeDraggable(document.querySelector(".splitter"), function (ev) {
+      if (!results || !workspace) return;
+      var box = workspace.getBoundingClientRect();
+      var h = box.bottom - ev.clientY;
+      h = Math.max(100, Math.min(box.height - 150, h));
+      results.style.height = h + "px";
+    }, "row-resize");
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initResizers);
+  } else {
+    initResizers();
+  }
+})();
