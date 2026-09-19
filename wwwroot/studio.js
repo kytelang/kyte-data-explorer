@@ -1,4 +1,4 @@
-// Client-side glue for Kyte Data Studio: the Monaco editor island, the Results/Messages
+// Client-side glue for Kyte Data Explorer: the Monaco editor island, the Results/Messages
 // tab toggle, and closing the connection modal. Monaco is loaded from cdnjs (a vendored
 // offline copy comes before the desktop build); its cross-origin language workers are
 // satisfied with a tiny data-URI proxy that importScripts the real worker.
@@ -10,7 +10,7 @@
 // attribute that we still set for clarity and future themes.
 (function () {
   try {
-    var t = localStorage.getItem("kyte-studio-theme") || "dark";
+    var t = localStorage.getItem("kde-theme") || "dark";
     document.documentElement.setAttribute("data-theme", t);
   } catch (e) {}
 })();
@@ -29,7 +29,7 @@ function studioToggleTheme() {
   var cur = document.documentElement.getAttribute("data-theme") || "dark";
   var next = cur === "light" ? "dark" : "light";
   document.documentElement.setAttribute("data-theme", next);
-  try { localStorage.setItem("kyte-studio-theme", next); } catch (e) {}
+  try { localStorage.setItem("kde-theme", next); } catch (e) {}
   studioThemeIcon();
   // Keep the Monaco editor in step with the app theme.
   if (window.monaco && window.__ed) {

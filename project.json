@@ -1,6 +1,12 @@
 {
-  "name": "kyte-studio",
+  "name": "kde",
   "version": "0.1.0",
   "type": "web",
-  "dependencies": []
+  "dependencies": [
+    "https://github.com/kytelang/kyte-kaidb",
+    "https://github.com/kytelang/kyte-postgres",
+    "https://github.com/kytelang/kyte-mysql",
+    "https://github.com/kytelang/kyte-mssql",
+    "https://github.com/kytelang/kyte-mongodb"
+  ]
 }

@@ -1,0 +1,35 @@
+{
+  "lockfileVersion": 1,
+  "dependencies": [
+    {
+      "url": "https://github.com/kytelang/kyte-kaidb",
+      "ref": null,
+      "resolved": null,
+      "name": "kyte-kaidb"
+    },
+    {
+      "url": "https://github.com/kytelang/kyte-postgres",
+      "ref": null,
+      "resolved": null,
+      "name": "kyte-postgres"
+    },
+    {
+      "url": "https://github.com/kytelang/kyte-mysql",
+      "ref": null,
+      "resolved": null,
+      "name": "kyte-mysql"
+    },
+    {
+      "url": "https://github.com/kytelang/kyte-mssql",
+      "ref": null,
+      "resolved": null,
+      "name": "kyte-mssql"
+    },
+    {
+      "url": "https://github.com/kytelang/kyte-mongodb",
+      "ref": null,
+      "resolved": null,
+      "name": "kyte-mongodb"
+    }
+  ]
+}

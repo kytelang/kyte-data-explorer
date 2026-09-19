@@ -1,4 +1,4 @@
-/* Kyte Data Studio. A VS Code-like shell: title bar, thin activity rail, object-explorer
+/* Kyte Data Explorer. A VS Code-like shell: title bar, thin activity rail, object-explorer
    tree, query workspace (tabs + Run toolbar + Monaco + results), and a status bar. Hand
    written (no Tailwind) so it runs from `kyte run` and, later, offline in the desktop
    webview.

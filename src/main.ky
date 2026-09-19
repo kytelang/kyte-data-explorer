@@ -83,7 +83,7 @@ fn runMigrations(): int {
 // its pages in a native WKWebView window here on the main thread. When the window closes,
 // the child server is stopped.
 fn runDesktop(port: int): int {
-    let argv0 = env.args().get(0) ?? "kyte-studio";
+    let argv0 = env.args().get(0) ?? "kde";
     let sargs = list.List<string>();
     sargs.push("--server");
     let child = process.Process.spawn(argv0, sargs);
@@ -99,9 +99,9 @@ fn runDesktop(port: int): int {
     }
 
     let url = "http://127.0.0.1:" + `${port}`;
-    console.log("Opening Kyte Data Studio window at " + url);
+    console.log("Opening Kyte Data Explorer window at " + url);
     let w = webview.Webview(false);
-    w.setTitle("Kyte Data Studio");
+    w.setTitle("Kyte Data Explorer");
     w.setSize(1280, 820, webview.HINT_NONE);
     w.navigate(url);
     w.run();
