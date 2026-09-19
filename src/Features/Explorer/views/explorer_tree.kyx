@@ -1,19 +1,21 @@
-// The object explorer: a list of connection roots (all open connections), with the
-// ACTIVE one expanded into a lazy tree:
+// The object explorer: a list of connection roots, with the ACTIVE one expanded into a
+// lazy tree that mirrors what pgAdmin / MySQL Workbench show:
 //
-//   server -> Databases -> database -> Tables -> table -> Columns / Indexes / Constraints
+//   server -> Databases -> database -> [Schemas -> schema ->] categories
+//   categories: Tables, Views, Materialized Views, Sequences, Procedures, Functions
+//   table/view -> Columns, Constraints, Indexes, Foreign Keys, Triggers
 //
-// Each level loads on first expand via htmx: a database node fetches its Tables folder
-// (GET /explorer/tables), and a table node fetches its Columns/Indexes/Constraints
-// (GET /explorer/table). Folders use native <details>/<summary>, so expand and collapse
-// need no JS. Mongo connections show Collections instead of Databases.
+// Every level loads on first expand via htmx. `pfx` is the parent node's DOM id, threaded
+// down so each child container has a unique, name-safe id (`<pfx>-<letter><index>`),
+// letting several branches be open at once without id collisions. Folders use native
+// <details>/<summary>, so expand and collapse need no JS.
 import list;
 import string;
 import Shared.Session;
+import Shared.Db;
 
-// The whole explorer body: the empty state when nothing is connected, otherwise one
-// block per open connection. `dbs`/`colls` belong to the ACTIVE connection: `dbs` are
-// its databases (SQL), `colls` its collections (Mongo).
+// The whole explorer body: the empty state, otherwise one block per open connection.
+// `dbs`/`colls` belong to the ACTIVE connection.
 pub fn explorerRoots(store: Session.ConnStore, dbs: list.List<string>, colls: list.List<string>): Html {
     if (store.conns.size() == 0) {
         return <div class="oe-empty">
@@ -32,8 +34,6 @@ pub fn explorerRoots(store: Session.ConnStore, dbs: list.List<string>, colls: li
     </div>;
 }
 
-// One connection root. The header selects the connection; the active connection also
-// renders its expanded object tree below the header.
 fn connBlock(co: Session.Conn, active: bool, dbs: list.List<string>, colls: list.List<string>): Html {
     let idStr = `${co.id}`;
     let engineTag = if (string.eql(co.dbtype, "mongodb")) "mongo" else "sql";
@@ -47,8 +47,8 @@ fn connBlock(co: Session.Conn, active: bool, dbs: list.List<string>, colls: list
     </div>;
 }
 
-// The expanded body of the active connection: Collections for Mongo, else a Databases
-// folder. Each database lazily htmx-loads its Tables folder when first opened.
+// The active connection's body: Collections for Mongo, else a Databases folder whose
+// members each lazily load their contents (GET /explorer/db).
 fn connBody(co: Session.Conn, dbs: list.List<string>, colls: list.List<string>): Html {
     if (string.eql(co.dbtype, "mongodb")) {
         return <div class="oe-conn-body">
@@ -72,16 +72,13 @@ fn connBody(co: Session.Conn, dbs: list.List<string>, colls: list.List<string>):
                 {if (dbs.size() == 0) { <div class="oe-none">No databases</div>; }}
                 {for (i in 0..dbs.size()) {
                     let dbn = dbs.get(i) ?? "";
-                    let dbi = `${i}`;
-                    let tid = "tbls-" + cid + "-" + dbi;
-                    <details class="oe-database">
-                        <summary hx-get={"/explorer/tables?cid=" + cid + "&dbi=" + dbi + "&db=" + dbn}
-                                 hx-trigger="click once"
-                                 hx-target={"#" + tid}
-                                 hx-swap="innerHTML">
+                    let pfx = "db-" + cid + "-" + `${i}`;
+                    <details class="oe-node">
+                        <summary hx-get={"/explorer/db?cid=" + cid + "&dbi=" + `${i}` + "&db=" + dbn + "&pfx=" + pfx}
+                                 hx-trigger="click once" hx-target={"#" + pfx} hx-swap="innerHTML">
                             <div class="oe-row db"><span><i class="ic ic-db"></i></span><span class="name">{dbn}</span><span class="chev"></span></div>
                         </summary>
-                        <div class="oe-children" id={tid}><div class="oe-none">Loading...</div></div>
+                        <div class="oe-children" id={pfx}><div class="oe-none">Loading...</div></div>
                     </details>;
                 }}
             </div>
@@ -89,29 +86,67 @@ fn connBody(co: Session.Conn, dbs: list.List<string>, colls: list.List<string>):
     </div>;
 }
 
-// The Tables folder for one database (returned by GET /explorer/tables). Each table is a
-// node that lazily loads its Columns/Indexes/Constraints on first expand. `cid`/`dbi`
-// build DOM ids unique across every database expanded in the tree.
-pub fn tablesFolder(cid: int, dbi: int, db: string, tables: list.List<string>): Html {
+// The Schemas folder of a database (PG/MSSQL). Each schema lazily loads its categories.
+pub fn schemasFolder(cid: int, db: string, pfx: string, schemas: list.List<string>): Html {
     let cids = `${cid}`;
-    let dbis = `${dbi}`;
     return <details open class="oe-folder">
-        <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Tables</span></div></summary>
+        <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Schemas</span></div></summary>
         <div class="oe-children">
-            {if (tables.size() == 0) { <div class="oe-none">No tables found</div>; }}
-            {for (i in 0..tables.size()) {
-                let tbl = tables.get(i) ?? "";
-                let did = "det-" + cids + "-" + dbis + "-" + `${i}`;
-                <details class="oe-table">
-                    <summary hx-get={"/explorer/table?cid=" + cids + "&db=" + db + "&name=" + tbl}
-                             hx-trigger="click once"
-                             hx-target={"#" + did}
-                             hx-swap="innerHTML">
-                        <div class="oe-row table" data-table={tbl}><span><i class="ic ic-table"></i></span><span class="name">{tbl}</span><span class="chev"></span></div>
+            {if (schemas.size() == 0) { <div class="oe-none">No schemas</div>; }}
+            {for (i in 0..schemas.size()) {
+                let sc = schemas.get(i) ?? "";
+                let cpfx = pfx + "-s" + `${i}`;
+                <details class="oe-node">
+                    <summary hx-get={"/explorer/schema?cid=" + cids + "&db=" + db + "&sc=" + sc + "&pfx=" + cpfx}
+                             hx-trigger="click once" hx-target={"#" + cpfx} hx-swap="innerHTML">
+                        <div class="oe-row db"><span><i class="ic ic-db"></i></span><span class="name">{sc}</span><span class="chev"></span></div>
                     </summary>
-                    <div class="oe-children" id={did}><div class="oe-none">Loading...</div></div>
+                    <div class="oe-children" id={cpfx}><div class="oe-none">Loading...</div></div>
                 </details>;
             }}
         </div>
     </details>;
+}
+
+// The category folders (Tables, Views, ...) of a database or schema. Each lazily loads
+// its object list (GET /explorer/cat).
+pub fn catFolders(cid: int, db: string, sc: string, pfx: string, cats: list.List<Db.CatDef>): Html {
+    let cids = `${cid}`;
+    return <div class="oe-catset">
+        {for (i in 0..cats.size()) {
+            let cat = cats.get(i) ?? Db.CatDef("", "", false);
+            let cpfx = pfx + "-c" + `${i}`;
+            <details class="oe-folder">
+                <summary hx-get={"/explorer/cat?cid=" + cids + "&db=" + db + "&sc=" + sc + "&cat=" + cat.key + "&pfx=" + cpfx}
+                         hx-trigger="click once" hx-target={"#" + cpfx} hx-swap="innerHTML">
+                    <div class="oe-row folder"><span class="ficon"></span><span class="name">{cat.label}</span></div>
+                </summary>
+                <div class="oe-children" id={cpfx}><div class="oe-none">Loading...</div></div>
+            </details>;
+        }}
+    </div>;
+}
+
+// The object list of one category. Tables and views are expandable into a detail node;
+// other objects (sequences, procedures, functions) are leaf rows.
+pub fn catBody(cid: int, db: string, sc: string, cat: string, pfx: string, objs: list.List<string>, expandable: bool): Html {
+    let cids = `${cid}`;
+    return <div class="oe-children">
+        {if (objs.size() == 0) { <div class="oe-none">None</div>; }}
+        {for (i in 0..objs.size()) {
+            let name = objs.get(i) ?? "";
+            let opfx = pfx + "-o" + `${i}`;
+            if (expandable) {
+                <details class="oe-table">
+                    <summary hx-get={"/explorer/table?cid=" + cids + "&db=" + db + "&sc=" + sc + "&name=" + name}
+                             hx-trigger="click once" hx-target={"#" + opfx} hx-swap="innerHTML">
+                        <div class="oe-row table" data-table={name}><span><i class="ic ic-table"></i></span><span class="name">{name}</span><span class="chev"></span></div>
+                    </summary>
+                    <div class="oe-children" id={opfx}><div class="oe-none">Loading...</div></div>
+                </details>;
+            } else {
+                <div class="oe-row leaf"><span><i class="ic ic-table"></i></span><span class="name">{name}</span></div>;
+            }
+        }}
+    </div>;
 }

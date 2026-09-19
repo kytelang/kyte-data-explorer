@@ -1,22 +1,23 @@
-// Bound query shapes for the lazily-expanded explorer tree. `ctx.bind<T>()` fills the
-// fields from the `?cid=..&db=..&name=..` query string. All are @serializable so the
-// framework can bind them.
-
-// GET /explorer/tables?cid=N&dbi=I&db=X : the tables of one database on connection N.
-// `dbi` is the database's index within the tree, used only to build unique DOM ids.
+// The bound query shape for every lazily-expanded explorer node. `ctx.bind<ExplorerQuery>()`
+// fills whichever fields are present in the `?...` query string; absent ones stay empty.
+// `pfx` is the parent node's DOM id prefix, threaded down so each level can build unique,
+// name-safe ids for its children (`<pfx>-<index>`).
 @serializable
-pub struct DbTablesQuery {
-    pub cid: string,
-    pub dbi: string,
-    pub db: string,
-    init() { self.cid = ""; self.dbi = ""; self.db = ""; }
-}
-
-// GET /explorer/table?cid=N&db=X&name=T : one table's columns, indexes and constraints.
-@serializable
-pub struct TableQuery {
-    pub cid: string,
-    pub db: string,
-    pub name: string,
-    init() { self.cid = ""; self.db = ""; self.name = ""; }
+pub struct ExplorerQuery {
+    pub cid: string,    // connection id
+    pub dbi: string,    // database index (for id building)
+    pub db: string,     // database name
+    pub sc: string,     // schema name (empty for MySQL/kaidb)
+    pub cat: string,    // object category: tables | views | matviews | sequences | procedures | functions
+    pub name: string,   // object (table/view) name
+    pub pfx: string,    // parent DOM id prefix
+    init() {
+        self.cid = "";
+        self.dbi = "";
+        self.db = "";
+        self.sc = "";
+        self.cat = "";
+        self.name = "";
+        self.pfx = "";
+    }
 }

@@ -35,6 +35,9 @@ pub fn page(connected: bool, host: string, port: string, dbname: string, engine:
                                         hx-get="/explorer" hx-target="#explorer-body" hx-swap="innerHTML"><i class="ic ic-refresh"></i></button>
                             </div>
                         </div>
+                        <div class="explorer-filter hidden" id="explorer-filter">
+                            <input type="text" id="oe-filter" placeholder="Filter objects..." autocomplete="off" spellcheck="false" />
+                        </div>
                         <div class="explorer-body" id="explorer-body"
                              hx-get="/explorer" hx-trigger="connected from:body" hx-swap="innerHTML">
                             {explorerInitial(connected)}

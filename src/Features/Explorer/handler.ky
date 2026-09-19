@@ -1,16 +1,14 @@
-// The Explorer feature handlers, over the shared ConnStore. The object tree is loaded
-// lazily, one level per request, so nothing beyond the connection roots is read until
-// the user expands it:
+// The Explorer feature handlers. The object tree is loaded lazily, one level per request,
+// mirroring the hierarchy a tool like pgAdmin or MySQL Workbench shows:
 //
-//   GET /explorer               -> connection roots; the active one expanded to its
-//                                  Databases (SQL) or Collections (Mongo).
-//   GET /explorer/tables?cid&db -> the Tables folder for one database, each table an
-//                                  htmx-expandable node.
-//   GET /explorer/table?cid&db&name -> one table's Columns, Indexes and Constraints.
+//   server -> Databases -> database -> [Schemas -> schema ->] categories
+//   categories: Tables, Views, Materialized Views, Sequences, Procedures, Functions
+//   table/view -> Columns, Constraints, Indexes, Foreign Keys, Triggers
 //
-// A database other than the connected one is read by rebuilding the DSN for that
-// database from the connection's stored credentials (`dsnFor`), so the same
-// introspection queries work scoped to any database on the server.
+// Postgres and SQL Server have a Schemas level; MySQL uses the database as the schema and
+// kaidb has only tables. A database other than the connected one is read by rebuilding
+// the DSN for it from the connection's stored credentials, so the same introspection
+// queries work scoped to any database.
 import web.routing;
 import web.response;
 import web.status;
@@ -24,11 +22,38 @@ import Features.Connections.command;
 import Features.Explorer.views.explorer_tree;
 import Features.Explorer.views.table_detail;
 
-// The DSN for a specific database on this connection, rebuilt from stored credentials.
 fn dsnForDb(c: Session.Conn, dbname: string): string {
     return dsnFor(c.dbtype, c.host, c.port, c.user, c.password, dbname);
 }
 
+// Whether this engine has a schema layer between the database and its objects.
+fn hasSchemas(dbtype: string): bool {
+    return string.eql(dbtype, "postgres") || string.eql(dbtype, "mssql");
+}
+
+// The object categories shown under a database (MySQL/kaidb) or schema (PG/MSSQL), in
+// display order. `expandable` categories (tables, views) drill into a detail node.
+fn categoriesFor(dbtype: string): list.List<Db.CatDef> {
+    let out = list.List<Db.CatDef>();
+    out.push(Db.CatDef("Tables", "tables", true));
+    if (string.eql(dbtype, "kaidb")) { return out; }
+    out.push(Db.CatDef("Views", "views", true));
+    if (string.eql(dbtype, "postgres")) {
+        out.push(Db.CatDef("Materialized Views", "matviews", false));
+        out.push(Db.CatDef("Sequences", "sequences", false));
+    }
+    out.push(Db.CatDef("Procedures", "procedures", false));
+    out.push(Db.CatDef("Functions", "functions", false));
+    return out;
+}
+
+fn notConnected(): Response {
+    return response.Response(Status.Ok, response.raw("<div class=\"oe-none\">Not connected.</div>"))
+        .setHeader("Content-Type", "text/html; charset=utf-8");
+}
+
+// GET /explorer: connection roots; the active one expanded to its Databases (SQL) or
+// Collections (Mongo).
 pub struct ExplorerHandler impl RouteHandler {
     store: ConnStore,
     init(store: ConnStore) { self.store = store; }
@@ -46,8 +71,6 @@ pub struct ExplorerHandler impl RouteHandler {
             return response.Response(Status.Ok, explorerRoots(s, empty, colls))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
-        // Server-wide database list. kaidb (and any engine that will not list) returns
-        // empty, so we fall back to the single connected database name.
         let dbs = await listDatabases(c.dbtype, c.dsn);
         if (dbs.size() == 0) { dbs.push(c.db()); }
         return response.Response(Status.Ok, explorerRoots(s, dbs, empty))
@@ -55,41 +78,77 @@ pub struct ExplorerHandler impl RouteHandler {
     }
 }
 
-// GET /explorer/tables?cid=N&db=X: the Tables folder of database X on connection N.
-pub struct DbTablesHandler impl RouteHandler {
+// GET /explorer/db?cid&dbi&db&pfx: the body of one database. Schemas for PG/MSSQL,
+// otherwise the category folders directly (MySQL uses the database as its schema).
+pub struct DbHandler impl RouteHandler {
     store: ConnStore,
     init(store: ConnStore) { self.store = store; }
 
-    async fn serve(self: DbTablesHandler, ctx: Context): Response {
-        let q = ctx.bind<DbTablesQuery>();
+    async fn serve(self: DbHandler, ctx: Context): Response {
+        let q = ctx.bind<ExplorerQuery>();
         let c = self.store.get(parseIntOr(q.cid, -1));
-        if (c == undefined) {
-            return response.Response(Status.Ok, response.raw("<div class=\"oe-none\">Not connected.</div>"))
+        if (c == undefined) { return notConnected(); }
+        let dsn = dsnForDb(c, q.db);
+        if (hasSchemas(c.dbtype)) {
+            let schemas = await listSchemas(c.dbtype, dsn);
+            return response.Response(Status.Ok, schemasFolder(c.id, q.db, q.pfx, schemas))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
-        let tables = await listTables(c.dbtype, dsnForDb(c, q.db));
-        return response.Response(Status.Ok, tablesFolder(c.id, parseIntOr(q.dbi, 0), q.db, tables))
+        // No schema layer: MySQL filters objects by the database name, kaidb ignores it.
+        let sc = if (string.eql(c.dbtype, "mysql")) q.db else "";
+        return response.Response(Status.Ok, catFolders(c.id, q.db, sc, q.pfx, categoriesFor(c.dbtype)))
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
 }
 
-// GET /explorer/table?cid=N&db=X&name=T: columns + indexes + constraints of one table.
+// GET /explorer/schema?cid&db&sc&pfx: the category folders of one schema (PG/MSSQL).
+pub struct SchemaHandler impl RouteHandler {
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
+
+    async fn serve(self: SchemaHandler, ctx: Context): Response {
+        let q = ctx.bind<ExplorerQuery>();
+        let c = self.store.get(parseIntOr(q.cid, -1));
+        if (c == undefined) { return notConnected(); }
+        return response.Response(Status.Ok, catFolders(c.id, q.db, q.sc, q.pfx, categoriesFor(c.dbtype)))
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}
+
+// GET /explorer/cat?cid&db&sc&cat&pfx: the objects of one category. Tables and views are
+// expandable into a detail node; the rest are leaf names.
+pub struct CatHandler impl RouteHandler {
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
+
+    async fn serve(self: CatHandler, ctx: Context): Response {
+        let q = ctx.bind<ExplorerQuery>();
+        let c = self.store.get(parseIntOr(q.cid, -1));
+        if (c == undefined) { return notConnected(); }
+        let objs = await listObjects(c.dbtype, dsnForDb(c, q.db), q.sc, q.cat);
+        let expandable = string.eql(q.cat, "tables") || string.eql(q.cat, "views");
+        return response.Response(Status.Ok, catBody(c.id, q.db, q.sc, q.cat, q.pfx, objs, expandable))
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}
+
+// GET /explorer/table?cid&db&sc&name: a table's Columns, Constraints, Indexes, Foreign
+// Keys and Triggers.
 pub struct TableDetailHandler impl RouteHandler {
     store: ConnStore,
     init(store: ConnStore) { self.store = store; }
 
     async fn serve(self: TableDetailHandler, ctx: Context): Response {
-        let q = ctx.bind<TableQuery>();
+        let q = ctx.bind<ExplorerQuery>();
         let c = self.store.get(parseIntOr(q.cid, -1));
-        if (c == undefined) {
-            return response.Response(Status.Ok, response.raw("<div class=\"oe-none\">Not connected.</div>"))
-                .setHeader("Content-Type", "text/html; charset=utf-8");
-        }
+        if (c == undefined) { return notConnected(); }
         let dsn = dsnForDb(c, q.db);
-        let cols = await listColumns(c.dbtype, dsn, q.name);
-        let idxs = await listIndexes(c.dbtype, dsn, q.name);
-        let cons = await listConstraints(c.dbtype, dsn, q.name);
-        return response.Response(Status.Ok, tableDetail(q.name, cols, idxs, cons))
+        let cols = await listColumns(c.dbtype, dsn, q.sc, q.name);
+        let cons = await listConstraints(c.dbtype, dsn, q.sc, q.name);
+        let idxs = await listIndexes(c.dbtype, dsn, q.sc, q.name);
+        let fks = await listForeignKeys(c.dbtype, dsn, q.sc, q.name);
+        let trigs = await listTriggers(c.dbtype, dsn, q.sc, q.name);
+        return response.Response(Status.Ok, tableDetail(q.name, cols, cons, idxs, fks, trigs))
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
 }

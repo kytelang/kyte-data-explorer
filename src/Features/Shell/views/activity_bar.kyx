@@ -6,7 +6,7 @@ pub fn activityBar(): Html {
         <div class="top">
             <button class="act active" type="button" title="Database Connections"
                     hx-get="/connect" hx-target="#modal-root" hx-swap="innerHTML"><i class="ic ic-plug"></i></button>
-            <button class="act" type="button" title="Search"><i class="ic ic-search"></i></button>
+            <button class="act" id="btn-search" type="button" title="Filter objects"><i class="ic ic-search"></i></button>
             <button class="act" type="button" title="Explorer"><i class="ic ic-files"></i></button>
         </div>
         <div class="bottom">

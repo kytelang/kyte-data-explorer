@@ -400,8 +400,39 @@ function studioExport(fmt) {
   }
 }
 
+// Filter the object tree by name. Works on the nodes currently loaded (the tree is lazy,
+// so unexpanded branches are matched once opened). A node stays visible if its own name
+// matches or any loaded descendant matches; everything else is hidden.
+function studioFilterTree(q) {
+  var body = document.getElementById("explorer-body");
+  if (!body) return;
+  q = (q || "").trim().toLowerCase();
+  var all = body.querySelectorAll("details, .oe-row, .oe-col, .oe-index, .oe-constraint, .oe-fk, .oe-trigger");
+  all.forEach(function (el) { el.classList.remove("filter-hide"); el.removeAttribute("data-keep"); });
+  if (!q) return;
+  var leaves = body.querySelectorAll(".oe-row .name, .oe-col, .oe-index, .oe-constraint, .oe-fk, .oe-trigger");
+  leaves.forEach(function (n) {
+    if ((n.textContent || "").toLowerCase().indexOf(q) === -1) return;
+    var cur = n.closest(".oe-row") || n;
+    while (cur && cur !== body) { cur.setAttribute("data-keep", "1"); cur = cur.parentElement; }
+  });
+  all.forEach(function (el) { if (!el.getAttribute("data-keep")) el.classList.add("filter-hide"); });
+}
+
+// Toggle the filter box (activity-bar Search button) and keep it applied.
+function studioToggleFilter() {
+  var f = document.getElementById("explorer-filter");
+  var inp = document.getElementById("oe-filter");
+  if (!f) return;
+  var show = f.classList.contains("hidden");
+  f.classList.toggle("hidden", !show);
+  if (show) { if (inp) inp.focus(); }
+  else { if (inp) inp.value = ""; studioFilterTree(""); }
+}
+
 // Delegated clicks: results tabs, pager, copy, and closing the connection modal.
 document.addEventListener("click", function (e) {
+  if (e.target.closest && e.target.closest("#btn-search")) { studioToggleFilter(); return; }
   if (e.target.closest && e.target.closest("#theme-toggle")) { studioToggleTheme(); return; }
 
   // Query tabs: new / close / switch. Close is checked before switch (it sits inside a tab).
@@ -484,6 +515,8 @@ document.addEventListener("htmx:afterSwap", function (e) {
   // anything inside the explorer.
   if (e.target && (e.target.id === "explorer-body" || (e.target.closest && e.target.closest("#explorer-body")))) {
     studioSyncExplorerButtons();
+    var of = document.getElementById("oe-filter");
+    if (of && of.value) studioFilterTree(of.value);
   }
   // The Create Index dialog just opened: prefill the target table from the selection.
   if (e.target && e.target.id === "modal-root" && window.__selTable) {
@@ -508,5 +541,6 @@ document.addEventListener("change", function (e) {
   studioSerializeColumns();
 });
 document.addEventListener("input", function (e) {
+  if (e.target && e.target.id === "oe-filter") { studioFilterTree(e.target.value); return; }
   if (e.target.closest && e.target.closest("#ct-rows")) studioSerializeColumns();
 });

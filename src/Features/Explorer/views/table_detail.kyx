@@ -1,11 +1,10 @@
-// One table's detail, lazily loaded into its tree node: a Columns subfolder (name and
-// type per column), an Indexes subfolder, and a Constraints subfolder. All three are
-// collapsible <details>; Columns opens by default, Indexes and Constraints stay
-// collapsed until expanded.
+// One table's (or view's) detail, lazily loaded into its tree node: Columns, Constraints,
+// Indexes, Foreign Keys and Triggers. All are collapsible <details>; Columns opens by
+// default. Empty sections show a muted "No ..." line so the shape is always visible.
 import list;
 import Shared.Db;
 
-pub fn tableDetail(table: string, cols: list.List<Db.ColumnInfo>, idxs: list.List<Db.IndexInfo>, cons: list.List<Db.ConstraintInfo>): Html {
+pub fn tableDetail(table: string, cols: list.List<Db.ColumnInfo>, cons: list.List<Db.ConstraintInfo>, idxs: list.List<Db.IndexInfo>, fks: list.List<Db.FkInfo>, trigs: list.List<string>): Html {
     return <div class="oe-detail">
         <details open class="oe-subfolder">
             <summary><div class="oe-row subfolder"><span class="ficon"></span><span class="name">Columns</span></div></summary>
@@ -22,6 +21,16 @@ pub fn tableDetail(table: string, cols: list.List<Db.ColumnInfo>, idxs: list.Lis
             </div>
         </details>
         <details class="oe-subfolder">
+            <summary><div class="oe-row subfolder"><span class="ficon"></span><span class="name">Constraints</span></div></summary>
+            <div class="oe-leaves">
+                {if (cons.size() == 0) { <div class="oe-none">No constraints</div>; }}
+                {for (i in 0..cons.size()) {
+                    let cn = cons.get(i) ?? Db.ConstraintInfo("", "");
+                    <div class="oe-constraint"><span class="ctype">{cn.ctype}</span><span>{cn.name}</span></div>;
+                }}
+            </div>
+        </details>
+        <details class="oe-subfolder">
             <summary><div class="oe-row subfolder"><span class="ficon"></span><span class="name">Indexes</span></div></summary>
             <div class="oe-leaves">
                 {if (idxs.size() == 0) { <div class="oe-none">No indexes</div>; }}
@@ -32,12 +41,22 @@ pub fn tableDetail(table: string, cols: list.List<Db.ColumnInfo>, idxs: list.Lis
             </div>
         </details>
         <details class="oe-subfolder">
-            <summary><div class="oe-row subfolder"><span class="ficon"></span><span class="name">Constraints</span></div></summary>
+            <summary><div class="oe-row subfolder"><span class="ficon"></span><span class="name">Foreign Keys</span></div></summary>
             <div class="oe-leaves">
-                {if (cons.size() == 0) { <div class="oe-none">No constraints</div>; }}
-                {for (i in 0..cons.size()) {
-                    let cn = cons.get(i) ?? Db.ConstraintInfo("", "");
-                    <div class="oe-constraint"><span class="ctype">{cn.ctype}</span><span>{cn.name}</span></div>;
+                {if (fks.size() == 0) { <div class="oe-none">No foreign keys</div>; }}
+                {for (i in 0..fks.size()) {
+                    let fk = fks.get(i) ?? Db.FkInfo("", "");
+                    <div class="oe-fk"><span class="bolt"><i class="ic ic-key"></i></span><span>{fk.name}</span><span class="type">{fk.detail}</span></div>;
+                }}
+            </div>
+        </details>
+        <details class="oe-subfolder">
+            <summary><div class="oe-row subfolder"><span class="ficon"></span><span class="name">Triggers</span></div></summary>
+            <div class="oe-leaves">
+                {if (trigs.size() == 0) { <div class="oe-none">No triggers</div>; }}
+                {for (i in 0..trigs.size()) {
+                    let t = trigs.get(i) ?? "";
+                    <div class="oe-trigger"><span class="bolt"><i class="ic ic-bolt"></i></span><span>{t}</span></div>;
                 }}
             </div>
         </details>

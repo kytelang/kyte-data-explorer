@@ -173,6 +173,30 @@ details > summary::-webkit-details-marker { display: none; }
 .oe-index .bolt { color: var(--accent); display: flex; }
 .oe-none { padding: 2px 4px 2px 12px; font-style: italic; font-size: 9px; color: var(--fg-faint); }
 
+/* Full object tree: expandable database/schema nodes, category folders, leaf objects,
+   the extra detail rows (constraints, foreign keys, triggers), and column PK/not-null. */
+.oe-node > .oe-children { border-left: 1px solid var(--border-strong); margin-left: 4px; padding-top: 2px; }
+.oe-catset { display: block; }
+.oe-row.leaf .name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.oe-row.leaf > span:first-child { color: var(--fg-muted); }
+.oe-row.db .chev { margin-left: auto; display: inline-block; width: 0.85em; height: 0.85em;
+  background-color: var(--fg-faint);
+  -webkit-mask: var(--i-chevron-right) no-repeat center / contain; mask: var(--i-chevron-right) no-repeat center / contain;
+  transition: transform 0.12s ease; }
+details[open] > summary > .oe-row.db .chev { transform: rotate(90deg); }
+.oe-constraint, .oe-fk, .oe-trigger { display: flex; align-items: center; gap: 5px; padding: 2px 4px 2px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; color: var(--fg); }
+.oe-constraint .ctype, .oe-fk .type, .oe-trigger .type { color: var(--fg-faint); font-size: 9px; }
+.oe-fk .bolt, .oe-trigger .bolt { color: var(--accent); display: flex; }
+.oe-col .pk { color: var(--accent); display: inline-flex; margin-right: 3px; }
+.oe-col .req { color: var(--fg-faint); font-size: 8px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* Object filter box (activity-bar Search button toggles it). */
+.explorer-filter { padding: 6px 8px; border-bottom: 1px solid var(--border-strong); }
+.explorer-filter.hidden { display: none; }
+.explorer-filter input { width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border-strong); border-radius: 4px; color: var(--fg); padding: 4px 8px; font-size: 12px; outline: none; }
+.explorer-filter input:focus { border-color: var(--accent); }
+.filter-hide { display: none !important; }
+
 /* ---- Query workspace ---- */
 .workspace { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; background: var(--bg); overflow: hidden; }
 .tabsbar { height: 36px; flex: 0 0 auto; display: flex; align-items: stretch; background: var(--bg-elev2); border-bottom: 1px solid var(--border); padding: 0 8px; overflow-x: auto; }

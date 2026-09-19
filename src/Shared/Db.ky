@@ -56,6 +56,23 @@ pub struct ConstraintInfo {
     init(name: string, ctype: string) { self.name = name; self.ctype = ctype; }
 }
 
+// One foreign key: its constraint name and a short "-> referenced_table(column)" detail.
+pub struct FkInfo {
+    pub name: string,
+    pub detail: string,
+    init(name: string, detail: string) { self.name = name; self.detail = detail; }
+}
+
+// One object category shown under a database or schema (Tables, Views, Sequences, ...).
+// `key` is the introspection category passed to `listObjects`; `expandable` marks the
+// categories whose members drill into a detail node (tables and views).
+pub struct CatDef {
+    pub label: string,
+    pub key: string,
+    pub expandable: bool,
+    init(label: string, key: string, expandable: bool) { self.label = label; self.key = key; self.expandable = expandable; }
+}
+
 // The row cap for an ad-hoc query result. We materialise at most this many rows so a
 // careless `SELECT *` on a large table cannot exhaust memory or the page; the results
 // pane paginates within the cap and shows a "first N of M" guard when it bites.
@@ -147,6 +164,15 @@ fn isInfoSchemaDriver(dbtype: string): bool {
     return string.eql(dbtype, "postgres") || string.eql(dbtype, "mysql") || string.eql(dbtype, "mssql");
 }
 
+// An ` AND table_schema = '<schema>'` clause for the information_schema engines, or an
+// empty string for kaidb (no schema layer) or when no schema is given. MySQL passes its
+// database name as the schema, which is exactly what `table_schema` matches there.
+fn schemaFilter(dbtype: string, schema: string): string {
+    if (!isInfoSchemaDriver(dbtype)) { return ""; }
+    if (string.eql(schema, "")) { return ""; }
+    return " AND table_schema = " + sqlLit(schema);
+}
+
 // Opens the right driver pool for a stored connection. An unknown dbtype falls back to
 // kaidb so the caller still gets a usable pool rather than a crash (the connect probe
 // would already have failed for a truly unsupported target).
@@ -185,25 +211,67 @@ pub async fn probe(dbtype: string, host: string, port: string, user: string, pas
 // Lists the user tables of the active connection, sorted by the query. System
 // catalog tables (kaidb `sys.*`, Postgres system schemas) are filtered out so the
 // explorer shows only the user's own tables.
-pub async fn listTables(dbtype: string, dsn: string): list.List<string> {
+// Lists the schemas of a database (Postgres and SQL Server only), with the engine's
+// system schemas filtered out. MySQL has no schema layer (a schema is a database) and
+// kaidb has none, so both return an empty list and the tree skips the schema level.
+pub async fn listSchemas(dbtype: string, dsn: string): list.List<string> {
     let out = list.List<string>();
     let p = poolFor(dbtype, dsn);
     let conn = await p.acquire();
-    let sql = "SELECT name FROM sys.tables";
+    let sql = "";
     if (string.eql(dbtype, "postgres")) {
-        sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name";
-    } else if (string.eql(dbtype, "mysql")) {
-        sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name";
+        sql = "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT LIKE 'pg\\_%' AND schema_name <> 'information_schema' ORDER BY schema_name";
     } else if (string.eql(dbtype, "mssql")) {
-        sql = "SELECT table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE' ORDER BY table_name";
+        sql = "SELECT name FROM sys.schemas WHERE name NOT IN ('sys','INFORMATION_SCHEMA','guest','db_owner','db_accessadmin','db_securityadmin','db_ddladmin','db_backupoperator','db_datareader','db_datawriter','db_denydatareader','db_denydatawriter') ORDER BY name";
     }
-    let rs = await conn.query(sql, list.List<db.DbValue>());
-    if (rs.ok()) {
-        let i = 0;
-        while (i < rs.rows.size()) {
-            let name = rs.rows.at(i).getText(0);
-            if (!string.startsWith(name, "sys.")) { out.push(name); }
-            i = i + 1;
+    if (!string.eql(sql, "")) {
+        let rs = await conn.query(sql, list.List<db.DbValue>());
+        if (rs.ok()) {
+            let i = 0;
+            while (i < rs.rows.size()) {
+                out.push(rs.rows.at(i).getText(0));
+                i = i + 1;
+            }
+        }
+    }
+    p.release(conn);
+    p.closeAll();
+    return out;
+}
+
+// Lists the objects of one category within a schema: `cat` is one of "tables", "views",
+// "matviews", "sequences", "procedures", "functions". For engines without a schema
+// layer (MySQL) the caller passes the database name as `schema`; kaidb only has tables.
+pub async fn listObjects(dbtype: string, dsn: string, schema: string, cat: string): list.List<string> {
+    let out = list.List<string>();
+    let p = poolFor(dbtype, dsn);
+    let conn = await p.acquire();
+    let scLit = sqlLit(schema);
+    let sql = "";
+    if (string.eql(dbtype, "kaidb")) {
+        if (string.eql(cat, "tables")) { sql = "SELECT name FROM sys.tables"; }
+    } else if (string.eql(cat, "tables")) {
+        sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = " + scLit + " AND table_type = 'BASE TABLE' ORDER BY table_name";
+    } else if (string.eql(cat, "views")) {
+        sql = "SELECT table_name FROM information_schema.views WHERE table_schema = " + scLit + " ORDER BY table_name";
+    } else if (string.eql(cat, "matviews")) {
+        if (string.eql(dbtype, "postgres")) { sql = "SELECT matviewname FROM pg_matviews WHERE schemaname = " + scLit + " ORDER BY matviewname"; }
+    } else if (string.eql(cat, "sequences")) {
+        if (string.eql(dbtype, "postgres")) { sql = "SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = " + scLit + " ORDER BY sequence_name"; }
+    } else if (string.eql(cat, "procedures")) {
+        sql = "SELECT routine_name FROM information_schema.routines WHERE routine_schema = " + scLit + " AND routine_type = 'PROCEDURE' ORDER BY routine_name";
+    } else if (string.eql(cat, "functions")) {
+        sql = "SELECT routine_name FROM information_schema.routines WHERE routine_schema = " + scLit + " AND routine_type = 'FUNCTION' ORDER BY routine_name";
+    }
+    if (!string.eql(sql, "")) {
+        let rs = await conn.query(sql, list.List<db.DbValue>());
+        if (rs.ok()) {
+            let i = 0;
+            while (i < rs.rows.size()) {
+                let name = rs.rows.at(i).getText(0);
+                if (!string.startsWith(name, "sys.")) { out.push(name); }
+                i = i + 1;
+            }
         }
     }
     p.release(conn);
@@ -214,17 +282,16 @@ pub async fn listTables(dbtype: string, dsn: string): list.List<string> {
 // Lists the columns of one table, in ordinal order, with type and nullability.
 // Postgres primary-key detection needs a catalog join we defer, so `primaryKey`
 // is reported only for kaidb for now.
-pub async fn listColumns(dbtype: string, dsn: string, table: string): list.List<ColumnInfo> {
+pub async fn listColumns(dbtype: string, dsn: string, schema: string, table: string): list.List<ColumnInfo> {
     let out = list.List<ColumnInfo>();
     let p = poolFor(dbtype, dsn);
     let conn = await p.acquire();
     let lit = sqlLit(table);
+    let scf = schemaFilter(dbtype, schema);
     let info = isInfoSchemaDriver(dbtype);
     let sql = "SELECT name, data_type, is_nullable, is_primary_key FROM sys.columns WHERE table_name = " + lit + " ORDER BY ordinal";
-    if (string.eql(dbtype, "mysql")) {
-        sql = "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = " + lit + " AND table_schema = DATABASE() ORDER BY ordinal_position";
-    } else if (info) {
-        sql = "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = " + lit + " ORDER BY ordinal_position";
+    if (info) {
+        sql = "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = " + lit + scf + " ORDER BY ordinal_position";
     }
     let rs = await conn.query(sql, list.List<db.DbValue>());
     if (rs.ok()) {
@@ -251,18 +318,21 @@ pub async fn listColumns(dbtype: string, dsn: string, table: string): list.List<
 }
 
 // Lists the indexes defined on one table.
-pub async fn listIndexes(dbtype: string, dsn: string, table: string): list.List<IndexInfo> {
+pub async fn listIndexes(dbtype: string, dsn: string, schema: string, table: string): list.List<IndexInfo> {
     let out = list.List<IndexInfo>();
     let p = poolFor(dbtype, dsn);
     let conn = await p.acquire();
     let lit = sqlLit(table);
     let sql = "SELECT name FROM sys.indexes WHERE table_name = " + lit;
     if (string.eql(dbtype, "postgres")) {
-        sql = "SELECT indexname FROM pg_indexes WHERE tablename = " + lit + " ORDER BY indexname";
+        let scc = if (string.eql(schema, "")) "" else " AND schemaname = " + sqlLit(schema);
+        sql = "SELECT indexname FROM pg_indexes WHERE tablename = " + lit + scc + " ORDER BY indexname";
     } else if (string.eql(dbtype, "mysql")) {
-        sql = "SELECT DISTINCT index_name FROM information_schema.statistics WHERE table_name = " + lit + " AND table_schema = DATABASE()";
+        let scc = if (string.eql(schema, "")) "" else " AND table_schema = " + sqlLit(schema);
+        sql = "SELECT DISTINCT index_name FROM information_schema.statistics WHERE table_name = " + lit + scc;
     } else if (string.eql(dbtype, "mssql")) {
-        sql = "SELECT name FROM sys.indexes WHERE object_id = OBJECT_ID(" + lit + ") AND name IS NOT NULL";
+        let objLit = if (string.eql(schema, "")) lit else sqlLit(schema + "." + table);
+        sql = "SELECT name FROM sys.indexes WHERE object_id = OBJECT_ID(" + objLit + ") AND name IS NOT NULL";
     }
     let rs = await conn.query(sql, list.List<db.DbValue>());
     if (rs.ok()) {
@@ -312,7 +382,7 @@ pub async fn listDatabases(dbtype: string, dsn: string): list.List<string> {
 // The SQL engines read `information_schema.table_constraints`; kaidb has no such catalog,
 // so its primary key is derived from the column catalog and returned as a single
 // PRIMARY KEY constraint when present.
-pub async fn listConstraints(dbtype: string, dsn: string, table: string): list.List<ConstraintInfo> {
+pub async fn listConstraints(dbtype: string, dsn: string, schema: string, table: string): list.List<ConstraintInfo> {
     let out = list.List<ConstraintInfo>();
     let p = poolFor(dbtype, dsn);
     let conn = await p.acquire();
@@ -334,10 +404,8 @@ pub async fn listConstraints(dbtype: string, dsn: string, table: string): list.L
         p.closeAll();
         return out;
     }
-    let sql = "SELECT constraint_name, constraint_type FROM information_schema.table_constraints WHERE table_name = " + lit + " ORDER BY constraint_type, constraint_name";
-    if (string.eql(dbtype, "mysql")) {
-        sql = "SELECT constraint_name, constraint_type FROM information_schema.table_constraints WHERE table_name = " + lit + " AND table_schema = DATABASE() ORDER BY constraint_type, constraint_name";
-    }
+    let scf = schemaFilter(dbtype, schema);
+    let sql = "SELECT constraint_name, constraint_type FROM information_schema.table_constraints WHERE table_name = " + lit + scf + " ORDER BY constraint_type, constraint_name";
     let rs = await conn.query(sql, list.List<db.DbValue>());
     if (rs.ok()) {
         let i = 0;
@@ -345,6 +413,80 @@ pub async fn listConstraints(dbtype: string, dsn: string, table: string): list.L
             let row = rs.rows.at(i);
             out.push(ConstraintInfo(row.getText(0), row.getText(1)));
             i = i + 1;
+        }
+    }
+    p.release(conn);
+    p.closeAll();
+    return out;
+}
+
+// Lists the foreign keys on one table, each with a "-> referenced_table" detail. kaidb
+// has no foreign-key catalog, so its list is empty.
+pub async fn listForeignKeys(dbtype: string, dsn: string, schema: string, table: string): list.List<FkInfo> {
+    let out = list.List<FkInfo>();
+    if (string.eql(dbtype, "kaidb")) { return out; }
+    let p = poolFor(dbtype, dsn);
+    let conn = await p.acquire();
+    let lit = sqlLit(table);
+    let scf = schemaFilter(dbtype, schema);
+    let sql = "";
+    let hasRef = false;
+    if (string.eql(dbtype, "mysql")) {
+        sql = "SELECT constraint_name, referenced_table_name, referenced_column_name FROM information_schema.key_column_usage WHERE table_name = " + lit + scf + " AND referenced_table_name IS NOT NULL";
+        hasRef = true;
+    } else if (string.eql(dbtype, "postgres")) {
+        sql = "SELECT tc.constraint_name, ccu.table_name FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name AND tc.constraint_schema = ccu.constraint_schema WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = " + lit + schemaFilter(dbtype, schema) + " ORDER BY tc.constraint_name";
+        hasRef = true;
+    } else if (string.eql(dbtype, "mssql")) {
+        let objLit = if (string.eql(schema, "")) lit else sqlLit(schema + "." + table);
+        sql = "SELECT fk.name, OBJECT_NAME(fk.referenced_object_id) FROM sys.foreign_keys fk WHERE fk.parent_object_id = OBJECT_ID(" + objLit + ")";
+        hasRef = true;
+    }
+    if (!string.eql(sql, "")) {
+        let rs = await conn.query(sql, list.List<db.DbValue>());
+        if (rs.ok()) {
+            let i = 0;
+            while (i < rs.rows.size()) {
+                let row = rs.rows.at(i);
+                let detail = "-> " + row.getText(1);
+                if (hasRef && string.eql(dbtype, "mysql")) { detail = "-> " + row.getText(1) + "(" + row.getText(2) + ")"; }
+                out.push(FkInfo(row.getText(0), detail));
+                i = i + 1;
+            }
+        }
+    }
+    p.release(conn);
+    p.closeAll();
+    return out;
+}
+
+// Lists the trigger names defined on one table. kaidb has no triggers, so its list is
+// empty.
+pub async fn listTriggers(dbtype: string, dsn: string, schema: string, table: string): list.List<string> {
+    let out = list.List<string>();
+    if (string.eql(dbtype, "kaidb")) { return out; }
+    let p = poolFor(dbtype, dsn);
+    let conn = await p.acquire();
+    let lit = sqlLit(table);
+    let sql = "";
+    if (string.eql(dbtype, "postgres")) {
+        let scc = if (string.eql(schema, "")) "" else " AND event_object_schema = " + sqlLit(schema);
+        sql = "SELECT DISTINCT trigger_name FROM information_schema.triggers WHERE event_object_table = " + lit + scc + " ORDER BY trigger_name";
+    } else if (string.eql(dbtype, "mysql")) {
+        let scc = if (string.eql(schema, "")) "" else " AND event_object_schema = " + sqlLit(schema);
+        sql = "SELECT DISTINCT trigger_name FROM information_schema.triggers WHERE event_object_table = " + lit + scc + " ORDER BY trigger_name";
+    } else if (string.eql(dbtype, "mssql")) {
+        let objLit = if (string.eql(schema, "")) lit else sqlLit(schema + "." + table);
+        sql = "SELECT t.name FROM sys.triggers t WHERE t.parent_id = OBJECT_ID(" + objLit + ") ORDER BY t.name";
+    }
+    if (!string.eql(sql, "")) {
+        let rs = await conn.query(sql, list.List<db.DbValue>());
+        if (rs.ok()) {
+            let i = 0;
+            while (i < rs.rows.size()) {
+                out.push(rs.rows.at(i).getText(0));
+                i = i + 1;
+            }
         }
     }
     p.release(conn);
