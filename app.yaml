@@ -11,7 +11,7 @@ config:
   # Add your own typed sections here and read each with `app.config.bind<T>("name")` from an
   # @serializable struct. For example, a database section:
   # db:
-  #   dsn: "novadb://127.0.0.1:3009?db=app"
+  #   dsn: "kaidb://127.0.0.1:3009?db=app"
   #   poolSize: 16
 
 # The sections below are read by the ORCHESTRATOR when you deploy this app (it ignores `config:`

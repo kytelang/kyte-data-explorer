@@ -12,7 +12,7 @@
 // and MSSQL read `information_schema` (plus each engine's index catalog). All go through
 // the same shared `data.db` result model, so the explorer above this layer is
 // driver-neutral. Mongo (document mode) is a later session.
-import novadb;
+import kaidb;
 import postgres;
 import mysql;
 import mssql;
@@ -145,7 +145,7 @@ fn poolFor(dbtype: string, dsn: string): pool.Pool {
     if (string.eql(dbtype, "postgres")) { return pool.Pool(postgres.PgDriver(), dsn, 1); }
     if (string.eql(dbtype, "mysql")) { return pool.Pool(mysql.MyDriver(), dsn, 1); }
     if (string.eql(dbtype, "mssql")) { return pool.Pool(mssql.MssqlDriver(), dsn, 1); }
-    return pool.Pool(novadb.KyteDriver(), dsn, 1);
+    return pool.Pool(kaidb.KyteDriver(), dsn, 1);
 }
 
 // Probes a target of any wired dbtype: opens a pool, runs a trivial liveness query,
