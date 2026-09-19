@@ -1,17 +1,23 @@
 // One table's detail, lazily loaded into its tree node: a Columns subfolder (name and
-// type per column) and an Indexes subfolder. Both are collapsible <details>; columns
-// open by default, indexes stay collapsed, matching the reference.
+// type per column), an Indexes subfolder, and a Constraints subfolder. All three are
+// collapsible <details>; Columns opens by default, Indexes and Constraints stay
+// collapsed until expanded.
 import list;
 import Shared.Db;
 
-pub fn tableDetail(table: string, cols: list.List<Db.ColumnInfo>, idxs: list.List<Db.IndexInfo>): Html {
+pub fn tableDetail(table: string, cols: list.List<Db.ColumnInfo>, idxs: list.List<Db.IndexInfo>, cons: list.List<Db.ConstraintInfo>): Html {
     return <div class="oe-detail">
         <details open class="oe-subfolder">
             <summary><div class="oe-row subfolder"><span class="ficon"></span><span class="name">Columns</span></div></summary>
             <div class="oe-leaves">
+                {if (cols.size() == 0) { <div class="oe-none">No columns</div>; }}
                 {for (i in 0..cols.size()) {
                     let c = cols.get(i) ?? Db.ColumnInfo("", "", false, false);
-                    <div class="oe-col"><span>{c.name}</span><span class="type">({c.dataType})</span></div>;
+                    <div class="oe-col">
+                        {if (c.primaryKey) { <span class="pk" title="Primary key"><i class="ic ic-key"></i></span>; }}
+                        <span>{c.name}</span><span class="type">({c.dataType})</span>
+                        {if (!c.nullable) { <span class="req" title="Not null">not null</span>; }}
+                    </div>;
                 }}
             </div>
         </details>
@@ -19,13 +25,19 @@ pub fn tableDetail(table: string, cols: list.List<Db.ColumnInfo>, idxs: list.Lis
             <summary><div class="oe-row subfolder"><span class="ficon"></span><span class="name">Indexes</span></div></summary>
             <div class="oe-leaves">
                 {if (idxs.size() == 0) { <div class="oe-none">No indexes</div>; }}
-                {if (idxs.size() > 0) {
-                    <div>
-                        {for (i in 0..idxs.size()) {
-                            let ix = idxs.get(i) ?? Db.IndexInfo("");
-                            <div class="oe-index"><span class="bolt"><i class="ic ic-key"></i></span><span>{ix.name}</span></div>;
-                        }}
-                    </div>;
+                {for (i in 0..idxs.size()) {
+                    let ix = idxs.get(i) ?? Db.IndexInfo("");
+                    <div class="oe-index"><span class="bolt"><i class="ic ic-key"></i></span><span>{ix.name}</span></div>;
+                }}
+            </div>
+        </details>
+        <details class="oe-subfolder">
+            <summary><div class="oe-row subfolder"><span class="ficon"></span><span class="name">Constraints</span></div></summary>
+            <div class="oe-leaves">
+                {if (cons.size() == 0) { <div class="oe-none">No constraints</div>; }}
+                {for (i in 0..cons.size()) {
+                    let cn = cons.get(i) ?? Db.ConstraintInfo("", "");
+                    <div class="oe-constraint"><span class="ctype">{cn.ctype}</span><span>{cn.name}</span></div>;
                 }}
             </div>
         </details>

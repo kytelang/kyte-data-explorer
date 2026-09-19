@@ -47,6 +47,15 @@ pub struct IndexInfo {
     init(name: string) { self.name = name; }
 }
 
+// One constraint on a table: its name and its kind (PRIMARY KEY, FOREIGN KEY, UNIQUE,
+// CHECK). Read from each engine's `information_schema.table_constraints`; kaidb reports
+// its primary key derived from the column catalog.
+pub struct ConstraintInfo {
+    pub name: string,
+    pub ctype: string,
+    init(name: string, ctype: string) { self.name = name; self.ctype = ctype; }
+}
+
 // The row cap for an ad-hoc query result. We materialise at most this many rows so a
 // careless `SELECT *` on a large table cannot exhaust memory or the page; the results
 // pane paginates within the cap and shows a "first N of M" guard when it bites.
@@ -260,6 +269,81 @@ pub async fn listIndexes(dbtype: string, dsn: string, table: string): list.List<
         let i = 0;
         while (i < rs.rows.size()) {
             out.push(IndexInfo(rs.rows.at(i).getText(0)));
+            i = i + 1;
+        }
+    }
+    p.release(conn);
+    p.closeAll();
+    return out;
+}
+
+// Lists the databases visible on the server, sorted, with the engine's own system
+// databases filtered out. kaidb is a single-database engine, so its list is empty and
+// the caller falls back to the connected database name.
+pub async fn listDatabases(dbtype: string, dsn: string): list.List<string> {
+    let out = list.List<string>();
+    if (string.eql(dbtype, "kaidb")) { return out; }
+    let p = poolFor(dbtype, dsn);
+    let conn = await p.acquire();
+    let sql = "";
+    if (string.eql(dbtype, "postgres")) {
+        sql = "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true ORDER BY datname";
+    } else if (string.eql(dbtype, "mysql")) {
+        sql = "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema','performance_schema','mysql','sys') ORDER BY schema_name";
+    } else if (string.eql(dbtype, "mssql")) {
+        sql = "SELECT name FROM sys.databases WHERE name NOT IN ('master','tempdb','model','msdb') ORDER BY name";
+    }
+    if (!string.eql(sql, "")) {
+        let rs = await conn.query(sql, list.List<db.DbValue>());
+        if (rs.ok()) {
+            let i = 0;
+            while (i < rs.rows.size()) {
+                out.push(rs.rows.at(i).getText(0));
+                i = i + 1;
+            }
+        }
+    }
+    p.release(conn);
+    p.closeAll();
+    return out;
+}
+
+// Lists the constraints defined on one table (primary key, foreign keys, unique, check).
+// The SQL engines read `information_schema.table_constraints`; kaidb has no such catalog,
+// so its primary key is derived from the column catalog and returned as a single
+// PRIMARY KEY constraint when present.
+pub async fn listConstraints(dbtype: string, dsn: string, table: string): list.List<ConstraintInfo> {
+    let out = list.List<ConstraintInfo>();
+    let p = poolFor(dbtype, dsn);
+    let conn = await p.acquire();
+    let lit = sqlLit(table);
+    if (string.eql(dbtype, "kaidb")) {
+        let ksql = "SELECT name FROM sys.columns WHERE table_name = " + lit + " AND is_primary_key <> 0 ORDER BY ordinal";
+        let krs = await conn.query(ksql, list.List<db.DbValue>());
+        if (krs.ok() && krs.rows.size() > 0) {
+            let cols = "";
+            let i = 0;
+            while (i < krs.rows.size()) {
+                if (i > 0) { cols = cols + ", "; }
+                cols = cols + krs.rows.at(i).getText(0);
+                i = i + 1;
+            }
+            out.push(ConstraintInfo("PRIMARY KEY (" + cols + ")", "PRIMARY KEY"));
+        }
+        p.release(conn);
+        p.closeAll();
+        return out;
+    }
+    let sql = "SELECT constraint_name, constraint_type FROM information_schema.table_constraints WHERE table_name = " + lit + " ORDER BY constraint_type, constraint_name";
+    if (string.eql(dbtype, "mysql")) {
+        sql = "SELECT constraint_name, constraint_type FROM information_schema.table_constraints WHERE table_name = " + lit + " AND table_schema = DATABASE() ORDER BY constraint_type, constraint_name";
+    }
+    let rs = await conn.query(sql, list.List<db.DbValue>());
+    if (rs.ok()) {
+        let i = 0;
+        while (i < rs.rows.size()) {
+            let row = rs.rows.at(i);
+            out.push(ConstraintInfo(row.getText(0), row.getText(1)));
             i = i + 1;
         }
     }

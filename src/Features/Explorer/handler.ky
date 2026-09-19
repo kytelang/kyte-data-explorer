@@ -1,19 +1,33 @@
-// The Explorer feature handlers, over the shared ConnStore.
+// The Explorer feature handlers, over the shared ConnStore. The object tree is loaded
+// lazily, one level per request, so nothing beyond the connection roots is read until
+// the user expands it:
 //
-// GET /explorer        -> all connection roots; the active one expanded to its user
-//                         tables (SQL) or collections (Mongo), each an htmx-expandable node.
-// GET /explorer/table  -> one table's columns and indexes (active connection), loaded
-//                         when the node is expanded.
+//   GET /explorer               -> connection roots; the active one expanded to its
+//                                  Databases (SQL) or Collections (Mongo).
+//   GET /explorer/tables?cid&db -> the Tables folder for one database, each table an
+//                                  htmx-expandable node.
+//   GET /explorer/table?cid&db&name -> one table's Columns, Indexes and Constraints.
+//
+// A database other than the connected one is read by rebuilding the DSN for that
+// database from the connection's stored credentials (`dsnFor`), so the same
+// introspection queries work scoped to any database on the server.
 import web.routing;
 import web.response;
 import web.status;
+import string;
 import list;
 import Shared.Session;
 import Shared.Db;
 import Shared.Mongo;
 import Features.Explorer.command;
+import Features.Connections.command;
 import Features.Explorer.views.explorer_tree;
 import Features.Explorer.views.table_detail;
+
+// The DSN for a specific database on this connection, rebuilt from stored credentials.
+fn dsnForDb(c: Session.Conn, dbname: string): string {
+    return dsnFor(c.dbtype, c.host, c.port, c.user, c.password, dbname);
+}
 
 pub struct ExplorerHandler impl RouteHandler {
     store: ConnStore,
@@ -32,27 +46,50 @@ pub struct ExplorerHandler impl RouteHandler {
             return response.Response(Status.Ok, explorerRoots(s, empty, colls))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
-        let tables = await listTables(c.dbtype, c.dsn);
-        return response.Response(Status.Ok, explorerRoots(s, tables, empty))
+        // Server-wide database list. kaidb (and any engine that will not list) returns
+        // empty, so we fall back to the single connected database name.
+        let dbs = await listDatabases(c.dbtype, c.dsn);
+        if (dbs.size() == 0) { dbs.push(c.db()); }
+        return response.Response(Status.Ok, explorerRoots(s, dbs, empty))
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
 }
 
-// GET /explorer/table?name=X: columns + indexes of one table on the active connection.
+// GET /explorer/tables?cid=N&db=X: the Tables folder of database X on connection N.
+pub struct DbTablesHandler impl RouteHandler {
+    store: ConnStore,
+    init(store: ConnStore) { self.store = store; }
+
+    async fn serve(self: DbTablesHandler, ctx: Context): Response {
+        let q = ctx.bind<DbTablesQuery>();
+        let c = self.store.get(parseIntOr(q.cid, -1));
+        if (c == undefined) {
+            return response.Response(Status.Ok, response.raw("<div class=\"oe-none\">Not connected.</div>"))
+                .setHeader("Content-Type", "text/html; charset=utf-8");
+        }
+        let tables = await listTables(c.dbtype, dsnForDb(c, q.db));
+        return response.Response(Status.Ok, tablesFolder(c.id, parseIntOr(q.dbi, 0), q.db, tables))
+            .setHeader("Content-Type", "text/html; charset=utf-8");
+    }
+}
+
+// GET /explorer/table?cid=N&db=X&name=T: columns + indexes + constraints of one table.
 pub struct TableDetailHandler impl RouteHandler {
     store: ConnStore,
     init(store: ConnStore) { self.store = store; }
 
     async fn serve(self: TableDetailHandler, ctx: Context): Response {
         let q = ctx.bind<TableQuery>();
-        let c = self.store.active();
+        let c = self.store.get(parseIntOr(q.cid, -1));
         if (c == undefined) {
-            return response.Response(Status.Ok, response.raw("<div class=\"muted\">Not connected.</div>"))
+            return response.Response(Status.Ok, response.raw("<div class=\"oe-none\">Not connected.</div>"))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
-        let cols = await listColumns(c.dbtype, c.dsn, q.name);
-        let idxs = await listIndexes(c.dbtype, c.dsn, q.name);
-        return response.Response(Status.Ok, tableDetail(q.name, cols, idxs))
+        let dsn = dsnForDb(c, q.db);
+        let cols = await listColumns(c.dbtype, dsn, q.name);
+        let idxs = await listIndexes(c.dbtype, dsn, q.name);
+        let cons = await listConstraints(c.dbtype, dsn, q.name);
+        return response.Response(Status.Ok, tableDetail(q.name, cols, idxs, cons))
             .setHeader("Content-Type", "text/html; charset=utf-8");
     }
 }

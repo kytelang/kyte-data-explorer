@@ -1,16 +1,20 @@
 // The object explorer: a list of connection roots (all open connections), with the
-// ACTIVE one expanded to its Databases/Tables (SQL) or Collections (Mongo). Clicking a
-// non-active connection selects it (GET /use?id=N), which re-renders the tree against
-// that connection. Adding a connection keeps the existing ones. Folders/rows use native
-// <details>/<summary> so expand/collapse needs no JS.
+// ACTIVE one expanded into a lazy tree:
+//
+//   server -> Databases -> database -> Tables -> table -> Columns / Indexes / Constraints
+//
+// Each level loads on first expand via htmx: a database node fetches its Tables folder
+// (GET /explorer/tables), and a table node fetches its Columns/Indexes/Constraints
+// (GET /explorer/table). Folders use native <details>/<summary>, so expand and collapse
+// need no JS. Mongo connections show Collections instead of Databases.
 import list;
 import string;
 import Shared.Session;
 
 // The whole explorer body: the empty state when nothing is connected, otherwise one
-// block per open connection. `tables`/`colls` belong to the ACTIVE connection (the only
-// one whose contents are loaded per render).
-pub fn explorerRoots(store: Session.ConnStore, tables: list.List<string>, colls: list.List<string>): Html {
+// block per open connection. `dbs`/`colls` belong to the ACTIVE connection: `dbs` are
+// its databases (SQL), `colls` its collections (Mongo).
+pub fn explorerRoots(store: Session.ConnStore, dbs: list.List<string>, colls: list.List<string>): Html {
     if (store.conns.size() == 0) {
         return <div class="oe-empty">
             <span class="icon"><i class="ic ic-plug"></i></span>
@@ -22,7 +26,7 @@ pub fn explorerRoots(store: Session.ConnStore, tables: list.List<string>, colls:
         {for (i in 0..store.conns.size()) {
             let co = store.conns.get(i);
             if (co != undefined) {
-                connBlock(co, co.id == store.activeId, tables, colls);
+                connBlock(co, co.id == store.activeId, dbs, colls);
             }
         }}
     </div>;
@@ -30,7 +34,7 @@ pub fn explorerRoots(store: Session.ConnStore, tables: list.List<string>, colls:
 
 // One connection root. The header selects the connection; the active connection also
 // renders its expanded object tree below the header.
-fn connBlock(co: Session.Conn, active: bool, tables: list.List<string>, colls: list.List<string>): Html {
+fn connBlock(co: Session.Conn, active: bool, dbs: list.List<string>, colls: list.List<string>): Html {
     let idStr = `${co.id}`;
     let engineTag = if (string.eql(co.dbtype, "mongodb")) "mongo" else "sql";
     let cls = if (active) "oe-conn active" else "oe-conn";
@@ -39,13 +43,13 @@ fn connBlock(co: Session.Conn, active: bool, tables: list.List<string>, colls: l
             <div class="label"><span class="bolt"><i class="ic ic-bolt"></i></span><span class="host">{co.heading()}</span></div>
             {if (active) { <span class="live" title="Active connection"></span>; }}
         </div>
-        {if (active) { connBody(co, tables, colls); }}
+        {if (active) { connBody(co, dbs, colls); }}
     </div>;
 }
 
-// The expanded body of the active connection: Collections for Mongo, else Databases +
-// Tables. Each table lazily htmx-loads its columns + indexes when first opened.
-fn connBody(co: Session.Conn, tables: list.List<string>, colls: list.List<string>): Html {
+// The expanded body of the active connection: Collections for Mongo, else a Databases
+// folder. Each database lazily htmx-loads its Tables folder when first opened.
+fn connBody(co: Session.Conn, dbs: list.List<string>, colls: list.List<string>): Html {
     if (string.eql(co.dbtype, "mongodb")) {
         return <div class="oe-conn-body">
             <details open class="oe-folder">
@@ -60,30 +64,54 @@ fn connBody(co: Session.Conn, tables: list.List<string>, colls: list.List<string
             </details>
         </div>;
     }
+    let cid = `${co.id}`;
     return <div class="oe-conn-body">
         <details open class="oe-folder">
             <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Databases</span></div></summary>
             <div class="oe-children">
-                <div class="oe-row db active"><span><i class="ic ic-db"></i></span><span class="name">{co.dbname}</span></div>
-            </div>
-        </details>
-        <details open class="oe-folder">
-            <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Tables</span></div></summary>
-            <div class="oe-children">
-                {if (tables.size() == 0) { <div class="oe-none">No tables found</div>; }}
-                {for (i in 0..tables.size()) {
-                    let tbl = tables.get(i) ?? "";
-                    <details class="oe-table">
-                        <summary hx-get={"/explorer/table?name=" + tbl}
+                {if (dbs.size() == 0) { <div class="oe-none">No databases</div>; }}
+                {for (i in 0..dbs.size()) {
+                    let dbn = dbs.get(i) ?? "";
+                    let dbi = `${i}`;
+                    let tid = "tbls-" + cid + "-" + dbi;
+                    <details class="oe-database">
+                        <summary hx-get={"/explorer/tables?cid=" + cid + "&dbi=" + dbi + "&db=" + dbn}
                                  hx-trigger="click once"
-                                 hx-target={"#det-" + tbl}
+                                 hx-target={"#" + tid}
                                  hx-swap="innerHTML">
-                            <div class="oe-row table" data-table={tbl}><span><i class="ic ic-table"></i></span><span class="name">{tbl}</span><span class="chev"></span></div>
+                            <div class="oe-row db"><span><i class="ic ic-db"></i></span><span class="name">{dbn}</span><span class="chev"></span></div>
                         </summary>
-                        <div class="oe-children" id={"det-" + tbl}><div class="oe-none">Loading...</div></div>
+                        <div class="oe-children" id={tid}><div class="oe-none">Loading...</div></div>
                     </details>;
                 }}
             </div>
         </details>
     </div>;
+}
+
+// The Tables folder for one database (returned by GET /explorer/tables). Each table is a
+// node that lazily loads its Columns/Indexes/Constraints on first expand. `cid`/`dbi`
+// build DOM ids unique across every database expanded in the tree.
+pub fn tablesFolder(cid: int, dbi: int, db: string, tables: list.List<string>): Html {
+    let cids = `${cid}`;
+    let dbis = `${dbi}`;
+    return <details open class="oe-folder">
+        <summary><div class="oe-row folder"><span class="ficon"></span><span class="name">Tables</span></div></summary>
+        <div class="oe-children">
+            {if (tables.size() == 0) { <div class="oe-none">No tables found</div>; }}
+            {for (i in 0..tables.size()) {
+                let tbl = tables.get(i) ?? "";
+                let did = "det-" + cids + "-" + dbis + "-" + `${i}`;
+                <details class="oe-table">
+                    <summary hx-get={"/explorer/table?cid=" + cids + "&db=" + db + "&name=" + tbl}
+                             hx-trigger="click once"
+                             hx-target={"#" + did}
+                             hx-swap="innerHTML">
+                        <div class="oe-row table" data-table={tbl}><span><i class="ic ic-table"></i></span><span class="name">{tbl}</span><span class="chev"></span></div>
+                    </summary>
+                    <div class="oe-children" id={did}><div class="oe-none">Loading...</div></div>
+                </details>;
+            }}
+        </div>
+    </details>;
 }

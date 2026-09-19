@@ -48,7 +48,7 @@ pub struct ConnectHandler impl RouteHandler {
                     .setHeader("Content-Type", "text/html; charset=utf-8");
             }
             let mdsn = mongoDsn(f.host, f.port, f.user, f.password, f.dbname);
-            let _mid = self.store.add("mongodb", mdsn, f.host, f.port, f.dbname);
+            let _mid = self.store.add("mongodb", mdsn, f.host, f.port, f.dbname, f.user, f.password);
             return response.Response(Status.Ok, response.raw(closeAndAnnounce()))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }
@@ -61,7 +61,7 @@ pub struct ConnectHandler impl RouteHandler {
         let r = await probe(f.dbtype, f.host, f.port, f.user, f.password, f.dbname);
         if (r.ok) {
             let dsn = dsnFor(f.dbtype, f.host, f.port, f.user, f.password, f.dbname);
-            let _id = self.store.add(f.dbtype, dsn, f.host, f.port, f.dbname);
+            let _id = self.store.add(f.dbtype, dsn, f.host, f.port, f.dbname, f.user, f.password);
             return response.Response(Status.Ok, response.raw(closeAndAnnounce()))
                 .setHeader("Content-Type", "text/html; charset=utf-8");
         }

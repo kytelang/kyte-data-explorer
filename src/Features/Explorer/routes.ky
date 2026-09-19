@@ -6,5 +6,6 @@ import Features.Explorer.handler;
 
 pub fn registerExplorer(ctx: AppContext): void {
     ctx.app.get("/explorer", ExplorerHandler(ctx.store));
+    ctx.app.get("/explorer/tables", DbTablesHandler(ctx.store));
     ctx.app.get("/explorer/table", TableDetailHandler(ctx.store));
 }

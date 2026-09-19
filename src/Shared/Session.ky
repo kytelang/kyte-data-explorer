@@ -26,14 +26,18 @@ pub struct Conn {
     pub host: string,
     pub port: string,
     pub dbname: string,
+    pub user: string,      // kept so the explorer can rebuild a DSN for another database
+    pub password: string,
 
-    init(id: int, dbtype: string, dsn: string, host: string, port: string, dbname: string) {
+    init(id: int, dbtype: string, dsn: string, host: string, port: string, dbname: string, user: string, password: string) {
         self.id = id;
         self.dbtype = dbtype;
         self.dsn = dsn;
         self.host = host;
         self.port = port;
         self.dbname = dbname;
+        self.user = user;
+        self.password = password;
     }
 
     fn db(self: Conn): string {
@@ -66,10 +70,10 @@ pub class ConnStore {
     }
 
     // Append a new connection and select it. Returns its id.
-    pub fn add(self: ConnStore, dbtype: string, dsn: string, host: string, port: string, dbname: string): int {
+    pub fn add(self: ConnStore, dbtype: string, dsn: string, host: string, port: string, dbname: string, user: string, password: string): int {
         let id = self.nextId;
         self.nextId = id + 1;
-        self.conns.push(Conn(id, dbtype, dsn, host, port, dbname));
+        self.conns.push(Conn(id, dbtype, dsn, host, port, dbname, user, password));
         self.activeId = id;
         return id;
     }
